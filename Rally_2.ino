@@ -265,7 +265,6 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
             inset: 0;
             background: #000;
             z-index: 2000;
-            display: flex;
             flex-direction: column;
         }
 
@@ -274,7 +273,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: clamp(3rem, 20vw, 12rem);
+            font-size: clamp(6rem, 20vw, 12rem);
         }
 
         #pilot-error-container {
@@ -789,6 +788,22 @@ function updatePilotUI(data){
   else if(e>0) document.getElementById('pilot-err').style.color="#3388ff";
   else document.getElementById('pilot-err').style.color="#f00";
 }
+
+async function activateWakeLock() {
+    if ('wakeLock' in navigator) {
+        try {
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log("WakeLock activo");
+        } catch (err) {
+            console.log("No se pudo activar WakeLock");
+        }
+    }
+}
+
+// Activar WakeLock automáticamente al cargar
+window.addEventListener('load', () => {
+    activateWakeLock();
+});
 </script>
 </body>
 </html>)=====";
