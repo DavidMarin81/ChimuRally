@@ -2,38 +2,210 @@
 #include <ESP8266WebServer.h>
 #include <WebSocketsServer.h>
 
-// --- CONFIGURACIÓN WIFI ---
+// ---------------- WIFI ----------------
 const char* ssid = "RALLY_PRO_V26";
 const char* password = "password123";
 
 ESP8266WebServer server(80);
-WebSocketsServer webSocket = WebSocketsServer(81);
+WebSocketsServer webSocket(81);
 
+<<<<<<< HEAD
+// ---------------- SENSOR ----------------
+const int sensorPin = 4; // D2 (GPIO4)
+volatile int pulsesQueued = 0;
+volatile unsigned long lastDebounceTime = 0;
+const int debounceDelay = 15;
+=======
 // --- HARDWARE SENSOR ---
 const int sensorPin = 4; // Pin D2 (GPIO4)
 volatile int pulssadf
 const int debounceDelay = 15; 
+>>>>>>> 80e0a464b9200f5dd7f5cc46cc7817902abee216
 
-// --- VARIABLES DE ESTADO ---
-float distReal = 0.0;
-float factorW = 1.0000; // Se sincroniza con el Calib del HTML
+// ---------------- BACKEND RALLY ----------------
+float distReal = 0.0f;
+float distIdeal = 0.0f;
+float factorW  = 1.0000f;         // calibración
+const float basePulseKm = 0.001050f; // tu factor base por pulso (km)
 
+bool raceRunning = false;
+unsigned long lastLoopMs = 0;
+unsigned long totalRaceMs = 0;
+
+float partialOffset = 0.0f; // distReal en el momento de reset parcial (para calcular parcial)
+
+// ---------------- RUTAS/TRAMOS EN BACKEND (Opción B) ----------------
+static const int MAX_STAGES = 12;
+static const int MAX_SEGS   = 200;
+
+struct Segment {
+  float km;    // km objetivo (sobre ideal)
+  float speed; // km/h
+};
+
+struct Stage {
+  uint32_t id;
+  String   name;
+  Segment  segs[MAX_SEGS];
+  int      segCount;
+};
+
+Stage stages[MAX_STAGES];
+int stageCount = 0;
+uint32_t currentStageId = 0;
+
+// Marca para reenviar estructura completa a todos cuando cambie algo
+volatile bool stagesDirty = true;
+
+// ---------------- Utils ----------------
+static String jsonEscape(const String& s) {
+  String out;
+  out.reserve(s.length() + 8);
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '\\') out += "\\\\";
+    else if (c == '"') out += "\\\"";
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else out += c;
+  }
+  return out;
+}
+
+static Stage* findStageById(uint32_t id) {
+  for (int i = 0; i < stageCount; i++) {
+    if (stages[i].id == id) return &stages[i];
+  }
+  return nullptr;
+}
+
+static void ensureDefaultStage() {
+  if (stageCount > 0) return;
+  stages[0].id = (uint32_t)millis() + 1000;
+  stages[0].name = "TRAMO 1";
+  stages[0].segCount = 0;
+  stageCount = 1;
+  currentStageId = stages[0].id;
+  stagesDirty = true;
+}
+
+static void sortSegments(Stage* st) {
+  // Inserción simple (MAX_SEGS pequeño)
+  for (int i = 1; i < st->segCount; i++) {
+    Segment key = st->segs[i];
+    int j = i - 1;
+    while (j >= 0 && st->segs[j].km > key.km) {
+      st->segs[j + 1] = st->segs[j];
+      j--;
+    }
+    st->segs[j + 1] = key;
+  }
+}
+
+static float backendCurrentSpeedKmh() {
+  Stage* st = findStageById(currentStageId);
+  if (!st || st->segCount == 0) return 0.0f;
+
+  // Igual que tu JS: usa distIdeal para decidir el segmento vigente
+  float spd = st->segs[0].speed;
+  for (int i = 0; i < st->segCount; i++) {
+    if (distIdeal >= st->segs[i].km) spd = st->segs[i].speed;
+    else break;
+  }
+  return spd;
+}
+
+static float distPartial() {
+  float p = distReal - partialOffset;
+  if (p < 0) p = 0;
+  return p;
+}
+
+// ---------------- INTERRUPCIÓN SENSOR ----------------
 void IRAM_ATTR sensorISR() {
   unsigned long currentTime = millis();
-  if ((currentTime - lastDebounceTime) > debounceDelay) {
+  // debounce muy simple
+  if ((currentTime - lastDebounceTime) > (unsigned long)debounceDelay) {
     pulsesQueued++;
     lastDebounceTime = currentTime;
   }
 }
 
-// --- TU HTML CALCADO Y CONECTADO AL SENSOR ---
-const char PAGE_MAIN[] PROGMEM = R"=====(
-<!DOCTYPE html>
+// ---------------- JSON builders ----------------
+static String buildStagesJson() {
+  // {"t":"stages","current":123,"stages":[{"id":...,"name":"...","segments":[{"km":...,"speed":...},...]},...]}
+  String j;
+  j.reserve(2048);
+  j += "{\"t\":\"stages\",\"current\":";
+  j += String(currentStageId);
+  j += ",\"stages\":[";
+  for (int i = 0; i < stageCount; i++) {
+    if (i) j += ",";
+    j += "{\"id\":";
+    j += String(stages[i].id);
+    j += ",\"name\":\"";
+    j += jsonEscape(stages[i].name);
+    j += "\",\"segments\":[";
+    for (int k = 0; k < stages[i].segCount; k++) {
+      if (k) j += ",";
+      j += "{\"km\":";
+      j += String(stages[i].segs[k].km, 3);
+      j += ",\"speed\":";
+      j += String(stages[i].segs[k].speed, 1);
+      j += "}";
+    }
+    j += "]}";
+  }
+  j += "]}";
+  return j;
+}
+
+static String buildTeleJson() {
+  float spd = backendCurrentSpeedKmh();
+  float errM = (distReal - distIdeal) * 1000.0f;
+
+  String j;
+  j.reserve(256);
+  j += "{\"t\":\"tele\",";
+  j += "\"real\":";
+  j += String(distReal, 3);
+  j += ",\"ideal\":";
+  j += String(distIdeal, 3);
+  j += ",\"partial\":";
+  j += String(distPartial(), 3);
+  j += ",\"error\":";
+  j += String((int)errM);
+  j += ",\"time\":";
+  j += String(totalRaceMs / 1000);
+  j += ",\"speed\":";
+  j += String(spd, 1);
+  j += ",\"running\":";
+  j += (raceRunning ? "true" : "false");
+  j += ",\"stage\":";
+  j += String(currentStageId);
+  j += "}";
+  return j;
+}
+
+void broadcastTele() {
+  String payload = buildTeleJson();
+  webSocket.broadcastTXT(payload);
+}
+
+void broadcastStages() {
+  String payload = buildStagesJson();
+  webSocket.broadcastTXT(payload);
+  stagesDirty = false;
+}
+
+// ---------------- FRONTEND COMPLETO (tu UI) ----------------
+const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">asdf
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Rally Pro Sim - V25 Master (No Sleep)</title>
+    <title>Rally Pro Sim - V26 Backend Total</title>
     <style>
         body { font-family: 'Courier New', monospace; background: #000; color: #fff; text-align: center; margin: 0; touch-action: manipulation; overflow-x: hidden; padding-bottom: 80px; }
         .header-clock { fdas
@@ -67,7 +239,8 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
         .btn-wakelock { background: #222; color: #666; font-size: 0.6rem; padding: 6px; margin-top: 5px; width: 100%; border: 1px solid #444; border-radius: 4px; transition: 0.3s; }
         .btn-wakelock.active { background: #004400; color: #0f0; border-color: #0f0; font-weight: bold; box-shadow: 0 0 5px #00ff00; }
         #pilot-ui { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 2000; flex-direction: column; justify-content: center; align-items: center; }
-        #throttle-container { display: none; } /* Ocultamos el acelerador virtual */
+        #throttle-container { display: none; }
+        table td { border-bottom: 1px solid #222; padding: 6px; }
     </style>
 </head>
 <body>
@@ -110,7 +283,12 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
             <div class="panel">
                 <span class="label">PARCIAL</span>
                 <div id="partial" class="val" style="color:#fff">0.000</div>
+<<<<<<< HEAD
+                <button onclick="resetPartial()" style="background:#444; color:#aaa; font-size:0.6rem; padding:4px; margin-top:4px;">RESET</button>
+            </div>
+=======
                 <button onclick="distPartial=0" style="background:#444; color:#aaa; font-asdfasdf
+>>>>>>> 80e0a464b9200f5dd7f5cc46cc7817902abee216
             <div class="panel panel-split">
                 <div class="split-top">
                     <span class="label">ERROR (m)</span>
@@ -197,187 +375,509 @@ const char PAGE_MAIN[] PROGMEM = R"=====(
         <button onclick="exitPilotMode()" style="color:#444; margin-top:20px;">CERRAR</button>
     </div>
 
-    <script>
-        let rallyData=[]; let currentStageId=null;
-        let isRunning=false, lastFrameTime=0, distReal=0, distIdeal=0, distPartial=0, totalTime=0;
-        let clockOffset = 0;
-        let isCalibrating=false;
-        let wakeLock = null;
+<script>
+/*
+  FRONTEND "Tonto":
+  - NO calcula ideal/error/crono/medias
+  - Solo pinta datos que llegan del ESP
+  - La lista de tramos/segmentos viene del ESP
+*/
 
-        // --- CONEXIÓN SENSOR ---
-        let socket = new WebSocket('ws://' + window.location.hostname + ':81');
-        socket.onmessage = (event) => {
-            let data = parseFloat(event.data);
-            distReal = data; // La distancia viene directa del sensor ESP8266
-            if(isCalibrating) document.getElementById('calib-trip').innerText = distReal.toFixed(3);
-            updatePilotUI({d: distReal.toFixed(3), e: Math.round((distReal-distIdeal)*1000)});
-        };
+let rallyData = [];         // espejo de backend (para pintar selects/tabla)
+let currentStageId = null;  // espejo de backend
+let isRunning = false;
+let isCalibrating = false;
 
-        function updateClock() {
-            const now = new Date(Date.now() + clockOffset);
-            const hh = now.getHours().toString().padStart(2,'0');
-            const mm = now.getMinutes().toString().padStart(2,'0');
-            const ss = now.getSeconds().toString().padStart(2,'0');
-            const timeStr = ${hh}:${mm}:${ss};
-            document.getElementById('official-clock').innerText = timeStr;
-            const targetTime = document.getElementById('start-time-input').value; 
-            if (targetTime && !isRunning) {
-                if (timeStr === targetTime || (targetTime.length === 5 && timeStr.startsWith(targetTime + ":00"))) {
-                    startRace();
-                    document.getElementById('start-time-input').value = ""; 
-                }
-            }
-        }
-        setInterval(updateClock, 1000);
-        function adjustClock(s) { clockOffset += (s * 1000); }
+let clockOffset = 0;
+let wakeLock = null;
 
-        async function toggleWakeLock() {
-            if ('wakeLock' in navigator) {
-                if (wakeLock === null) {
-                    try {
-                        wakeLock = await navigator.wakeLock.request('screen');
-                        document.getElementById('btn-wakelock').innerText = "PANTALLA: ENCENDIDA";
-                        document.getElementById('btn-wakelock').classList.add('active');
-                    } catch (err) {}
-                } else {
-                    wakeLock.release(); wakeLock = null;
-                }
-            }
-        }
+// --- WebSocket ---
+let socket = new WebSocket('ws://' + window.location.hostname + ':81');
 
-        // --- MOTOR RECALIBRADO PARA SENSOR ---
-        function gameLoop(ct){
-            let dt=(ct-lastFrameTime)/1000; lastFrameTime=ct; if(dt>0.5)dt=0.5;
-            if(isRunning){
-                totalTime+=dt; 
-                let tspd=0; 
-                let s=rallyData.find(x=>x.id===currentStageId);
-                if(s) {
-                    for(let g of s.segments){ 
-                        if(distIdeal>=g.km) tspd=g.speed; else break; 
-                    }
-                }
-                distIdeal+=(tspd/3600)*dt;
-                updateUI(tspd);
-            }
-            requestAnimationFrame(gameLoop);
-        }
+socket.onopen = () => {
+  socket.send("GET_ALL"); // pide rutas + estado
+};
 
-        function updateUI(tspd){
-            document.getElementById('real').innerText=distReal.toFixed(3);
-            document.getElementById('ideal').innerText=distIdeal.toFixed(3);
-            document.getElementById('partial').innerText=distPartial.toFixed(3);
-            document.getElementById('current-media-display').innerText=tspd.toFixed(1) + " km/h";
-            let e = (distReal-distIdeal)*1000;
-            document.getElementById('error-m').innerText=Math.round(e);
-            let m=Math.floor(totalTime/60), s=Math.floor(totalTime%60);
-            document.getElementById('timer').innerText=${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')};
-            let pos=50+e; if(pos<0)pos=0; if(pos>100)pos=100;
-            document.getElementById('race-cursor').style.left=pos+"%";
-            const cont=document.getElementById('race-error-container'); cont.className="error-bar-system";
-            if(Math.abs(e)<5) cont.classList.add('bg-ok'); else if(e>0) cont.classList.add('bg-early'); else cont.classList.add('bg-late');
-        }
+socket.onmessage = (event) => {
+  let msg = {};
+  try { msg = JSON.parse(event.data); } catch(e){ return; }
 
-        function syncStageChoice(el) { currentStageId = parseInt(el.value); renderStageSelect(); loadStageData(); }
-        function createNewStage(){let id=Date.now(); rallyData.push({id:id,name:"TRAMO "+(rallyData.length+1),segments:[]}); currentStageId=id; renderStageSelect(); loadStageData();}
-        function renderStageSelect(){
-            const s1=document.getElementById('stage-select'), s2=document.getElementById('race-stage-select');
-            [s1, s2].forEach(s => { s.innerHTML=""; rallyData.forEach(st=>{ s.innerHTML+=<option value="${st.id}" ${st.id==currentStageId?'selected':''}>${st.name}</option>; }); });
-        }
-        function loadStageData(){let s=rallyData.find(x=>x.id===currentStageId); if(s){document.getElementById('stage-name-input').value=s.name; renderSegmentsTable(s.segments);}}
-        function updateStageName(){let s=rallyData.find(x=>x.id===currentStageId); if(s)s.name=document.getElementById('stage-name-input').value; saveToStorage(); renderStageSelect();}
-        function addSegment(){
-            let s=rallyData.find(x=>x.id===currentStageId);
-            if(!s)return;
-            let km=parseFloat(document.getElementById('input-km').value);
-            let spd=parseFloat(document.getElementById('input-spd').value);
-            s.segments.push({km:km, speed:spd});
-            s.segments.sort((a,b)=>a.km-b.km);
-            saveToStorage(); renderSegmentsTable(s.segments);
-        }
-        function toggleCalibRun(){ isCalibrating=!isCalibrating; if(isCalibrating){ socket.send("C_START"); document.getElementById('btnCalibStart').innerText="STOP"; } else { document.getElementById('btnCalibStart').innerText="INICIAR"; document.getElementById('calib-input-group').style.display="block"; } }
-        function calculateFactor(){ let om=parseFloat(document.getElementById('official-dist-input').value); socket.send("F" + om); switchTab('race'); }
-        function syncDistance(){ let val=document.getElementById('sync-km-input').value; if(val!==""){socket.send("S" + val); document.getElementById('sync-km-input').value="";} }
-        function adjustDist(val){ socket.send("A" + val); }
-        function startRace(){isRunning=true; document.getElementById('btnStart').style.display="none"; document.getElementById('btnStop').style.display="inline-block";}
-        function pauseRace(){isRunning=false; document.getElementById('btnStart').style.display="inline-block"; document.getElementById('btnStop').style.display="none";}
-        function resetAll(){ pauseRace(); socket.send("R"); distIdeal=0; totalTime=0; updateUI(0); }
-        function switchTab(t){ document.querySelectorAll('.view').forEach(e=>e.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(e=>e.classList.remove('active')); document.getElementById('view-'+t).classList.add('active'); if(t==='setup'){ renderStageSelect(); loadStageData(); } }
-        function toggleInputMode(){ const m=document.querySelector('input[name="inputMode"]:checked').value; document.getElementById('mode-speed-container').style.display=m==='speed'?'inline':'none'; document.getElementById('mode-time-container').style.display=m==='time'?'inline':'none'; }
-        function renderSegmentsTable(seg){ const b=document.getElementById('segments-body'); b.innerHTML=""; seg.forEach((g,i)=>{ b.innerHTML+=<tr><td>KM ${g.km.toFixed(3)}</td><td>${g.speed.toFixed(1)} km/h</td><td><button onclick="delSeg(${i})" style="color:red;">X</button></td></tr>; }); }
-        function delSeg(i){ let s=rallyData.find(x=>x.id===currentStageId); s.segments.splice(i,1); saveToStorage(); renderSegmentsTable(s.segments); }
-        function loadFromStorage(){ const d=localStorage.getItem('rallyProData_v9'); if(d)rallyData=JSON.parse(d); }
-        function saveToStorage(){localStorage.setItem('rallyProData_v9',JSON.stringify(rallyData));}
+  if(msg.t === "tele") {
+    // pintar telemetría (SIN cálculos)
+    document.getElementById('real').innerText   = Number(msg.real).toFixed(3);
+    document.getElementById('ideal').innerText  = Number(msg.ideal).toFixed(3);
+    document.getElementById('partial').innerText= Number(msg.partial).toFixed(3);
+    document.getElementById('error-m').innerText= msg.error;
+    document.getElementById('current-media-display').innerText = Number(msg.speed).toFixed(1) + " km/h";
 
-        function enterPilotMode(){ document.getElementById('pilot-ui').style.display='flex'; toggleWakeLock(); }
-        function exitPilotMode(){ document.getElementById('pilot-ui').style.display='none'; }
-        function updatePilotUI(data){
-            document.getElementById('pilot-dist').innerText=data.d;
-            document.getElementById('pilot-err').innerText=data.e;
-            let pos=50+(data.e/2); if(pos<0)pos=0; if(pos>100)pos=100;
-            document.getElementById('pilot-cursor').style.left=pos+"%";
-            const cont=document.getElementById('pilot-error-container'); cont.className="error-bar-system";
-            if(Math.abs(data.e)<5) { cont.classList.add('bg-ok'); document.getElementById('pilot-err').style.color="#0f0"; }
-            else if(data.e>0) { cont.classList.add('bg-early'); document.getElementById('pilot-err').style.color="#3388ff"; }
-            else { cont.classList.add('bg-late'); document.getElementById('pilot-err').style.color="#f00"; }
-        }
+    // crono
+    let m = Math.floor(msg.time / 60);
+    let s = msg.time % 60;
+    document.getElementById('timer').innerText =
+      m.toString().padStart(2,'0') + ":" + s.toString().padStart(2,'0');
 
-        loadFromStorage(); if(rallyData.length===0) createNewStage();
-        renderStageSelect(); lastFrameTime=performance.now(); requestAnimationFrame(gameLoop);
-    </script>
-</body>
-</html>
-)=====";
+    // barra error carrera
+    updateErrorBar("race", msg.error);
 
-// --- GESTIÓN WEBSOCKETS (Sincronización Corregida) ---
-void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-  if (type == WStype_TEXT) {
-    String msg = String((char*)payload);
-    
-    if (msg == "R") {
-      distReal = 0;
-    } 
-    else if (msg.startsWith("S")) {
-      distReal = msg.substring(1).toFloat();
-    }
-    else if (msg.startsWith("A")) {
-      distReal += msg.substring(1).toFloat();
-    }
-    else if (msg.startsWith("F")) {
-      // Calibración: Calcula factor basado en metros reales recorridos
-      float officialMeters = msg.substring(1).toFloat();
-      if(distReal > 0) factorW = officialMeters / (distReal / factorW); 
-    }
-    else if (msg == "C_START") {
-      distReal = 0;
+    // modo piloto
+    updatePilotUI({ d: Number(msg.real).toFixed(3), e: msg.error });
+
+    // estado botones
+    isRunning = !!msg.running;
+    document.getElementById('btnStart').style.display = isRunning ? "none" : "inline-block";
+    document.getElementById('btnStop').style.display  = isRunning ? "inline-block" : "none";
+
+    // calib
+    if(isCalibrating) {
+      document.getElementById('calib-trip').innerText = Number(msg.real).toFixed(3);
     }
 
-    String response = String(distReal, 3);
-    webSocket.broadcastTXT(response);
+  } else if(msg.t === "stages") {
+    rallyData = msg.stages || [];
+    currentStageId = msg.current || null;
+    renderStageSelect();
+    loadStageData();
+  }
+};
+
+// --- Reloj visual (solo UI) ---
+function updateClock() {
+  const now = new Date(Date.now() + clockOffset);
+  const hh = now.getHours().toString().padStart(2,'0');
+  const mm = now.getMinutes().toString().padStart(2,'0');
+  const ss = now.getSeconds().toString().padStart(2,'0');
+  const timeStr = `${hh}:${mm}:${ss}`;
+  document.getElementById('official-clock').innerText = timeStr;
+
+  // start automático por hora (solo dispara comando, no calcula)
+  const targetTime = document.getElementById('start-time-input').value;
+  if (targetTime && !isRunning) {
+    if (timeStr === targetTime || (targetTime.length === 5 && timeStr.startsWith(targetTime + ":00"))) {
+      startRace();
+      document.getElementById('start-time-input').value = "";
+    }
+  }
+}
+setInterval(updateClock, 1000);
+function adjustClock(s) { clockOffset += (s * 1000); }
+
+// --- WakeLock (solo UI) ---
+async function toggleWakeLock() {
+  if ('wakeLock' in navigator) {
+    if (wakeLock === null) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        document.getElementById('btn-wakelock').innerText = "PANTALLA: ENCENDIDA";
+        document.getElementById('btn-wakelock').classList.add('active');
+      } catch (err) {}
+    } else {
+      wakeLock.release(); wakeLock = null;
+      document.getElementById('btn-wakelock').innerText = "PANTALLA: NORMAL";
+      document.getElementById('btn-wakelock').classList.remove('active');
+    }
   }
 }
 
+// --- UI helpers ---
+function updateErrorBar(prefix, errorMeters) {
+  // tu UI usa % 0..100. Mantenemos tu lógica simple:
+  let e = Number(errorMeters);
+  let pos = 50 + e;
+  if(pos < 0) pos = 0;
+  if(pos > 100) pos = 100;
+
+  document.getElementById(prefix + '-cursor').style.left = pos + "%";
+  const cont = document.getElementById(prefix + '-error-container');
+  cont.className = "error-bar-system";
+
+  if(Math.abs(e) < 5) cont.classList.add('bg-ok');
+  else if(e > 0) cont.classList.add('bg-early');
+  else cont.classList.add('bg-late');
+}
+
+// --- Tabs ---
+function switchTab(t){
+  document.querySelectorAll('.view').forEach(e=>e.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(e=>e.classList.remove('active'));
+  document.getElementById('view-'+t).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b=>{
+    if(b.getAttribute('onclick') && b.getAttribute('onclick').includes(`'${t}'`)) b.classList.add('active');
+  });
+
+  if(t==='setup'){
+    renderStageSelect();
+    loadStageData();
+  }
+}
+
+// --- RUTAS / TRAMOS: ahora backend ---
+function syncStageChoice(el) {
+  currentStageId = parseInt(el.value, 10);
+  socket.send("STAGE_SEL:" + currentStageId);
+}
+function createNewStage(){
+  socket.send("STAGE_NEW");
+}
+function updateStageName(){
+  let name = document.getElementById('stage-name-input').value || "";
+  if(currentStageId) socket.send("STAGE_NAME:" + currentStageId + ":" + encodeURIComponent(name));
+}
+function renderStageSelect(){
+  const s1=document.getElementById('stage-select');
+  const s2=document.getElementById('race-stage-select');
+  [s1,s2].forEach(sel=>{
+    sel.innerHTML="";
+    rallyData.forEach(st=>{
+      const opt=document.createElement("option");
+      opt.value = st.id;
+      opt.textContent = st.name;
+      if(st.id == currentStageId) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  });
+}
+function loadStageData(){
+  let st = rallyData.find(x=>x.id==currentStageId);
+  if(!st) return;
+  document.getElementById('stage-name-input').value = st.name;
+  renderSegmentsTable(st.segments || []);
+}
+function toggleInputMode(){
+  const m=document.querySelector('input[name="inputMode"]:checked').value;
+  document.getElementById('mode-speed-container').style.display = (m==='speed')?'inline':'none';
+  document.getElementById('mode-time-container').style.display  = (m==='time')?'inline':'none';
+}
+function addSegment(){
+  if(!currentStageId) return;
+  const mode=document.querySelector('input[name="inputMode"]:checked').value;
+  const km = parseFloat(document.getElementById('input-km').value);
+  if(isNaN(km)) return;
+
+  let spd = 0;
+  if(mode === "speed") {
+    spd = parseFloat(document.getElementById('input-spd').value);
+    if(isNaN(spd)) return;
+  } else {
+    // modo tabla: M y S -> velocidad equivalente (km/h) para 1km en ese tiempo
+    const mm = parseFloat(document.getElementById('table-m').value);
+    const ss = parseFloat(document.getElementById('table-s').value);
+    if(isNaN(mm) || isNaN(ss)) return;
+    const totalSec = (mm*60)+ss;
+    if(totalSec <= 0) return;
+    spd = 3600 / totalSec; // km/h si 1km tarda totalSec
+  }
+
+  socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
+
+  // limpiar
+  document.getElementById('input-km').value="";
+  if(mode==="speed") document.getElementById('input-spd').value="";
+}
+function renderSegmentsTable(seg){
+  const b=document.getElementById('segments-body');
+  b.innerHTML="";
+  seg.forEach((g,i)=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML = `<td>KM ${Number(g.km).toFixed(3)}</td><td>${Number(g.speed).toFixed(1)} km/h</td><td><button onclick="delSeg(${i})" style="color:red; background:#111; border:1px solid #444; padding:6px;">X</button></td>`;
+    b.appendChild(tr);
+  });
+}
+function delSeg(i){
+  if(!currentStageId) return;
+  socket.send("SEG_DEL:" + currentStageId + ":" + i);
+}
+
+// --- Calibración (backend) ---
+function toggleCalibRun(){
+  isCalibrating = !isCalibrating;
+  if(isCalibrating){
+    socket.send("C_START");
+    document.getElementById('btnCalibStart').innerText="STOP";
+    document.getElementById('calib-input-group').style.display="none";
+  } else {
+    document.getElementById('btnCalibStart').innerText="INICIAR";
+    document.getElementById('calib-input-group').style.display="block";
+  }
+}
+function calculateFactor(){
+  const om = parseFloat(document.getElementById('official-dist-input').value);
+  if(isNaN(om)) return;
+  socket.send("F" + om);
+  switchTab('race');
+}
+
+// --- Sincronía/ajustes distancia (backend) ---
+function syncDistance(){
+  let val=document.getElementById('sync-km-input').value;
+  if(val!==""){
+    socket.send("S" + val);
+    document.getElementById('sync-km-input').value="";
+  }
+}
+function adjustDist(val){ socket.send("A" + val); }
+
+// --- Control carrera (backend) ---
+function startRace(){ socket.send("START"); }
+function pauseRace(){ socket.send("STOP"); }
+function resetAll(){ socket.send("RESET"); }
+function resetPartial(){ socket.send("P_RESET"); }
+
+// --- Modo Piloto (solo UI) ---
+function enterPilotMode(){ document.getElementById('pilot-ui').style.display='flex'; toggleWakeLock(); }
+function exitPilotMode(){ document.getElementById('pilot-ui').style.display='none'; }
+function updatePilotUI(data){
+  document.getElementById('pilot-dist').innerText = data.d;
+  document.getElementById('pilot-err').innerText  = data.e;
+  updateErrorBar("pilot", data.e);
+
+  const e = Number(data.e);
+  if(Math.abs(e)<5) document.getElementById('pilot-err').style.color="#0f0";
+  else if(e>0) document.getElementById('pilot-err').style.color="#3388ff";
+  else document.getElementById('pilot-err').style.color="#f00";
+}
+</script>
+</body>
+</html>)=====";
+
+// ---------------- WebSocket parsing ----------------
+static void handleCommand(const String& msg) {
+  ensureDefaultStage();
+
+  if (msg == "GET_ALL") {
+    stagesDirty = true;
+    return;
+  }
+
+  // --- Carrera ---
+  if (msg == "START") {
+    raceRunning = true;
+    lastLoopMs = millis();
+    return;
+  }
+  if (msg == "STOP") {
+    raceRunning = false;
+    return;
+  }
+  if (msg == "RESET") {
+    raceRunning = false;
+    distReal = 0.0f;
+    distIdeal = 0.0f;
+    totalRaceMs = 0;
+    partialOffset = 0.0f;
+    return;
+  }
+  if (msg == "P_RESET") {
+    partialOffset = distReal;
+    return;
+  }
+
+  // --- Calibración ---
+  if (msg == "C_START") {
+    distReal = 0.0f;
+    partialOffset = 0.0f;
+    return;
+  }
+  if (msg.startsWith("F")) {
+    float officialMeters = msg.substring(1).toFloat();
+    if (distReal > 0.0f) {
+      // Ajuste compatible con tu planteamiento
+      // Nota: distReal está en km -> distReal*1000 = metros
+      float measuredMeters = (distReal * 1000.0f);
+      factorW = factorW * (officialMeters / measuredMeters);
+    }
+    return;
+  }
+
+  // --- Sync distancia / Ajuste ---
+  if (msg.startsWith("S")) {
+    distReal = msg.substring(1).toFloat();
+    // Mantener parcial coherente (que no “salte”)
+    partialOffset = distReal - distPartial();
+    return;
+  }
+  if (msg.startsWith("A")) {
+    distReal += msg.substring(1).toFloat();
+    return;
+  }
+
+  // --- Rutas/tramos (Opción B) ---
+  if (msg == "STAGE_NEW") {
+    if (stageCount >= MAX_STAGES) return;
+    uint32_t id = (uint32_t)millis() + (uint32_t)random(1000, 9999);
+    stages[stageCount].id = id;
+    stages[stageCount].name = "TRAMO " + String(stageCount + 1);
+    stages[stageCount].segCount = 0;
+    stageCount++;
+    currentStageId = id;
+    stagesDirty = true;
+    return;
+  }
+
+  if (msg.startsWith("STAGE_SEL:")) {
+    uint32_t id = (uint32_t)msg.substring(strlen("STAGE_SEL:")).toInt();
+    if (findStageById(id)) {
+      currentStageId = id;
+      stagesDirty = true;
+    }
+    return;
+  }
+
+  if (msg.startsWith("STAGE_NAME:")) {
+    // "STAGE_NAME:<id>:<urlencoded>"
+    int p1 = msg.indexOf(':');            // after STAGE_NAME
+    int p2 = msg.indexOf(':', p1 + 1);    // after id
+    if (p2 < 0) return;
+    uint32_t id = (uint32_t)msg.substring(p1 + 1, p2).toInt();
+    String enc = msg.substring(p2 + 1);
+    enc.replace("+", "%20"); // por si acaso
+    // decode muy básico %XX
+    String name;
+    name.reserve(enc.length());
+    for (unsigned int i = 0; i < enc.length(); i++) {
+      if (enc[i] == '%' && i + 2 < enc.length()) {
+        char hex[3] = { enc[i+1], enc[i+2], 0 };
+        char c = (char) strtoul(hex, nullptr, 16);
+        name += c;
+        i += 2;
+      } else {
+        name += enc[i];
+      }
+    }
+    Stage* st = findStageById(id);
+    if (st) {
+      st->name = name;
+      stagesDirty = true;
+    }
+    return;
+  }
+
+  if (msg.startsWith("SEG_ADD:")) {
+    // "SEG_ADD:<stageId>:<km>:<spd>"
+    int p1 = msg.indexOf(':'); // after SEG_ADD
+    int p2 = msg.indexOf(':', p1+1);
+    int p3 = msg.indexOf(':', p2+1);
+    if (p2 < 0 || p3 < 0) return;
+    uint32_t id = (uint32_t)msg.substring(p1+1, p2).toInt();
+    float km = msg.substring(p2+1, p3).toFloat();
+    float spd = msg.substring(p3+1).toFloat();
+
+    Stage* st = findStageById(id);
+    if (!st) return;
+    if (st->segCount >= MAX_SEGS) return;
+
+    st->segs[st->segCount].km = km;
+    st->segs[st->segCount].speed = spd;
+    st->segCount++;
+    sortSegments(st);
+    stagesDirty = true;
+    return;
+  }
+
+  if (msg.startsWith("SEG_DEL:")) {
+    // "SEG_DEL:<stageId>:<idx>"
+    int p1 = msg.indexOf(':');
+    int p2 = msg.indexOf(':', p1+1);
+    if (p2 < 0) return;
+    uint32_t id = (uint32_t)msg.substring(p1+1, p2).toInt();
+    int idx = msg.substring(p2+1).toInt();
+    Stage* st = findStageById(id);
+    if (!st) return;
+    if (idx < 0 || idx >= st->segCount) return;
+
+    for (int i = idx; i < st->segCount - 1; i++) st->segs[i] = st->segs[i+1];
+    st->segCount--;
+    stagesDirty = true;
+    return;
+  }
+}
+
+// ---------------- WebSocket events ----------------
+void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
+  if (type == WStype_CONNECTED) {
+    ensureDefaultStage();
+    // Enviar stages al conectar
+    String s1 = buildStagesJson();
+    webSocket.sendTXT(num, s1);
+
+    String s2 = buildTeleJson();
+    webSocket.sendTXT(num, s2);
+
+  }
+  else if (type == WStype_TEXT) {
+    String msg = String((char*)payload);
+    handleCommand(msg);
+    // responder rápido con tele tras comandos
+    String t = buildTeleJson();
+    webSocket.sendTXT(num, t);
+
+    if (stagesDirty) {
+      String st = buildStagesJson();
+      webSocket.sendTXT(num, st);
+    }
+
+  }
+}
+
+// ---------------- Setup/Loop ----------------
 void setup() {
   pinMode(sensorPin, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(sensorPin), sensorISR, RISING);
 
   WiFi.softAP(ssid, password);
-  server.on("/", []() { server.send_P(200, "text/html", PAGE_MAIN); });
+
+  server.on("/", []() {
+    server.send_P(200, "text/html", PAGE_MAIN);
+  });
   server.begin();
-  
+
   webSocket.begin();
   webSocket.onEvent(onWebSocketEvent);
+
+  ensureDefaultStage();
+  lastLoopMs = millis();
 }
 
 void loop() {
   server.handleClient();
   webSocket.loop();
 
-  if (pulsesQueued > 0) {
-    distReal += (factorW * 0.001050 * pulsesQueued); // 0.001050 es un factor base ajustable
-    pulsesQueued = 0;
-    
-    String response = String(distReal, 3);
-    webSocket.broadcastTXT(response);
+  unsigned long now = millis();
+
+  // --- integrar pulsos ---
+  int p = 0;
+  noInterrupts();
+  if (pulsesQueued > 0) { p = pulsesQueued; pulsesQueued = 0; }
+  interrupts();
+
+  if (p > 0) {
+    // km += factorW * base * pulsos
+    distReal += (factorW * basePulseKm * (float)p);
+  }
+
+  // --- motor de carrera ---
+  unsigned long dtMs = now - lastLoopMs;
+  if (dtMs > 500) dtMs = 500; // clamp
+  float dt = dtMs / 1000.0f;
+
+  if (raceRunning) {
+    totalRaceMs += dtMs;
+    float spd = backendCurrentSpeedKmh(); // km/h desde la tabla del tramo
+    distIdeal += (spd / 3600.0f) * dt;
+  }
+
+  lastLoopMs = now;
+
+  // --- broadcast tele periódica ---
+  static unsigned long lastTele = 0;
+  if (now - lastTele >= 100) {
+    broadcastTele();
+    lastTele = now;
+  }
+
+  // --- broadcast stages si cambiaron ---
+  static unsigned long lastStages = 0;
+  if (stagesDirty && (now - lastStages >= 150)) {
+    broadcastStages();
+    lastStages = now;
   }
 }
