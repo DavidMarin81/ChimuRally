@@ -9,18 +9,11 @@ const char* password = "password123";
 ESP8266WebServer server(80);
 WebSocketsServer webSocket(81);
 
-<<<<<<< HEAD
 // ---------------- SENSOR ----------------
 const int sensorPin = 4; // D2 (GPIO4)
 volatile int pulsesQueued = 0;
 volatile unsigned long lastDebounceTime = 0;
 const int debounceDelay = 15;
-=======
-// --- HARDWARE SENSOR ---
-const int sensorPin = 4; // Pin D2 (GPIO4)
-volatile int pulssadf
-const int debounceDelay = 15; 
->>>>>>> 80e0a464b9200f5dd7f5cc46cc7817902abee216
 
 // ---------------- BACKEND RALLY ----------------
 float distReal = 0.0f;
@@ -203,15 +196,17 @@ void broadcastStages() {
 const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">asdf
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Rally Pro Sim - V26 Backend Total</title>
     <style>
         body { font-family: 'Courier New', monospace; background: #000; color: #fff; text-align: center; margin: 0; touch-action: manipulation; overflow-x: hidden; padding-bottom: 80px; }
-        .header-clock { fdas
+        .header-clock { background: #1a1a1a; padding: 5px; border-bottom: 2px solid #ff9900; display: flex; justify-content: space-around; align-items: center; }
+        .clock-val { font-size: 1.5rem; color: #ff9900; font-weight: bold; }
         .clock-adj { background: #333; color: #fff; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; }
         .tabs { display: flex; width: 100%; border-bottom: 2px solid #333; background: #111; position: sticky; top: 0; z-index: 100; }
-        .tab-btn { flex: 1; padding: 12px fasdolor: #0f0; border-bottom: 4px solid #0f0; }
+        .tab-btn { flex: 1; padding: 12px 2px; background: #111; color: #888; border: none; font-size: 0.7rem; font-weight: bold; cursor: pointer; }
+        .tab-btn.active { background: #003300; color: #0f0; border-bottom: 4px solid #0f0; }
         .view { display: none; padding: 10px; }
         .view.active { display: block; }
         .error-bar-system { height: 60px; background: #000; margin: 5px; position: relative; border: 3px solid #555; overflow: hidden; border-radius: 8px; }
@@ -231,7 +226,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
         input[type="number"], input[type="text"], input[type="time"], select { background: #000; color: #0f0; border: 1px solid #555; padding: 8px; font-size: 1rem; text-align: center; }
         button { cursor: pointer; border: none; font-weight: bold; border-radius: 5px; text-transform: uppercase; }
         .btn-main { padding: 12px; width: 30%; font-size: 0.9rem; }
-        .btn-start { background: #2easdfsdfa7d32; color: #fff; }
+        .btn-start { background: #2e7d32; color: #fff; }
         .btn-stop { background: #c62828; color: #fff; display: none; }
         .control-panel { background: #111; border: 1px solid #444; margin: 5px; padding: 10px; border-radius: 8px; }
         .control-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 10px; }
@@ -247,7 +242,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
     <div class="header-clock">
         <button class="clock-adj" onclick="adjustClock(-1)">-1s</button>
         <div>
-            <span class="labasdf/span>
+            <span class="label" style="margin:0">RELOJ CARRERA</span>
             <div id="official-clock" class="clock-val">00:00:00</div>
         </div>
         <button class="clock-adj" onclick="adjustClock(1)">+1s</button>
@@ -264,7 +259,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
         <div id="race-error-container" class="error-bar-system">
             <div class="center-line"></div>
             <div id="race-cursor" class="cursor-line"></div>
-        </div>asdf
+        </div>
 
         <div class="grid">
             <div class="panel">
@@ -272,7 +267,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
                 <div id="real" class="val" style="color:#00ffff">0.000</div>
                 <div style="display:flex; justify-content:center; gap:5px; margin-top:5px;">
                     <button onclick="adjustDist(-0.010)" style="background:#333; padding:8px;">-10m</button>
-                    <button onclick=fadsasdfjustDist(0.010)" style="background:#333; padding:8px;">+10m</button>
+                    <button onclick="adjustDist(0.010)" style="background:#333; padding:8px;">+10m</button>
                 </div>
             </div>
             <div class="panel">
@@ -283,12 +278,8 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
             <div class="panel">
                 <span class="label">PARCIAL</span>
                 <div id="partial" class="val" style="color:#fff">0.000</div>
-<<<<<<< HEAD
                 <button onclick="resetPartial()" style="background:#444; color:#aaa; font-size:0.6rem; padding:4px; margin-top:4px;">RESET</button>
             </div>
-=======
-                <button onclick="distPartial=0" style="background:#444; color:#aaa; font-asdfasdf
->>>>>>> 80e0a464b9200f5dd7f5cc46cc7817902abee216
             <div class="panel panel-split">
                 <div class="split-top">
                     <span class="label">ERROR (m)</span>
@@ -801,7 +792,6 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t lengt
 
     String s2 = buildTeleJson();
     webSocket.sendTXT(num, s2);
-
   }
   else if (type == WStype_TEXT) {
     String msg = String((char*)payload);
