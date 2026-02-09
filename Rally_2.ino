@@ -19,7 +19,11 @@ const int debounceDelay = 15;
 float distReal = 0.0f;
 float distIdeal = 0.0f;
 float factorW  = 1.0000f;         // calibración
-const float basePulseKm = 0.001050f; // tu factor base por pulso (km)
+float basePulseKm = 0.001050f; // tu factor base por pulso (km)
+
+float wheelPerimeter = 2.0f;   // metros
+int magnetCount = 1;
+
 
 bool raceRunning = false;
 unsigned long lastLoopMs = 0;
@@ -350,6 +354,27 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
                 <button onclick="calculateFactor()" style="background:#ff9900; color:#000; padding:10px;">APLICAR</button>
             </div>
         </div>
+
+        <hr style="margin:20px 0; border-color:#333;">
+
+        <div style="background:#111; padding:15px; border:1px solid #333;">
+            <div class="label">CALIBRACIÓN POR RUEDA</div>
+
+            <div style="margin-top:10px;">
+                PERÍMETRO (m):
+                <input type="number" id="wheel-perimeter-input" step="0.001" value="2.000" style="width:100px;">
+            </div>
+
+            <div style="margin-top:10px;">
+                IMANES:
+                <input type="number" id="wheel-magnets-input" value="1" style="width:80px;">
+            </div>
+
+            <button onclick="applyWheelCalibration()" 
+                    style="background:#2e7d32; color:#fff; padding:10px; margin-top:15px; width:100%;">
+                APLICAR POR RUEDA
+            </button>
+        </div>
     </div>
 
     <div id="view-pilot" class="view">
@@ -451,6 +476,18 @@ function updateClock() {
 }
 setInterval(updateClock, 1000);
 function adjustClock(s) { clockOffset += (s * 1000); }
+
+function applyWheelCalibration(){
+    let perim = parseFloat(document.getElementById('wheel-perimeter-input').value);
+    let magnets = parseInt(document.getElementById('wheel-magnets-input').value);
+
+    if(isNaN(perim) || isNaN(magnets) || perim <= 0 || magnets <= 0){
+        alert("Valores inválidos");
+        return;
+    }
+
+    socket.send("CALC_WHEEL:" + perim + ":" + magnets);
+}
 
 // --- WakeLock (solo UI) ---
 async function toggleWakeLock() {
@@ -778,6 +815,29 @@ static void handleCommand(const String& msg) {
     for (int i = idx; i < st->segCount - 1; i++) st->segs[i] = st->segs[i+1];
     st->segCount--;
     stagesDirty = true;
+    return;
+  }
+
+  // --- Calibración por perímetro ---
+  if (msg.startsWith("CALC_WHEEL:")) {
+    // Formato: CALC_WHEEL:<perimetro_metros>:<imanes>
+
+    int p1 = msg.indexOf(':');
+    int p2 = msg.indexOf(':', p1 + 1);
+    if (p2 < 0) return;
+
+    float perim = msg.substring(p1 + 1, p2).toFloat();
+    int magnets = msg.substring(p2 + 1).toInt();
+
+    if (perim > 0 && magnets > 0) {
+      wheelPerimeter = perim;
+      magnetCount = magnets;
+
+      // km por pulso
+      basePulseKm = (wheelPerimeter / magnetCount) / 1000.0f;
+
+      factorW = 1.0f; // reset factor extra
+    }
     return;
   }
 }
