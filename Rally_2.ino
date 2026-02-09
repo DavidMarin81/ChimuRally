@@ -16,7 +16,8 @@ volatile unsigned long lastDebounceTime = 0;
 const int debounceDelay = 15;
 
 // ---------------- BACKEND RALLY ----------------
-float distReal = 0.0f;
+long distReal_mm = 0;
+long partialOffset_mm = 0;   // offset para parcial
 float distIdeal = 0.0f;
 float factorW  = 1.0000f;         // calibración
 float basePulseKm = 0.001050f; // tu factor base por pulso (km)
@@ -28,8 +29,6 @@ int magnetCount = 1;
 bool raceRunning = false;
 unsigned long lastLoopMs = 0;
 unsigned long totalRaceMs = 0;
-
-float partialOffset = 0.0f; // distReal en el momento de reset parcial (para calcular parcial)
 
 // ---------------- RUTAS/TRAMOS EN BACKEND (Opción B) ----------------
 static const int MAX_STAGES = 12;
@@ -113,11 +112,10 @@ static float backendCurrentSpeedKmh() {
   return spd;
 }
 
-static float distPartial() {
-  float p = distReal - partialOffset;
-  if (p < 0) p = 0;
-  return p;
+double distPartial() {
+  return (distReal_mm - partialOffset_mm) / 1000000.0;
 }
+
 
 // ---------------- INTERRUPCIÓN SENSOR ----------------
 void IRAM_ATTR sensorISR() {
@@ -160,17 +158,19 @@ static String buildStagesJson() {
 
 static String buildTeleJson() {
   float spd = backendCurrentSpeedKmh();
-  float errM = (distReal - distIdeal) * 1000.0f;
+  double distReal_km = distReal_mm / 1000000.0;
+  double distPartial_km = (distReal_mm - partialOffset_mm) / 1000000.0;
+  double errM = (distReal_km - distIdeal) * 1000.0;
 
   String j;
   j.reserve(256);
   j += "{\"t\":\"tele\",";
   j += "\"real\":";
-  j += String(distReal, 3);
+  j += String(distReal_km, 6);
   j += ",\"ideal\":";
   j += String(distIdeal, 3);
   j += ",\"partial\":";
-  j += String(distPartial(), 3);
+  j += String(distPartial_km, 6);
   j += ",\"error\":";
   j += String((int)errM);
   j += ",\"time\":";
@@ -181,6 +181,21 @@ static String buildTeleJson() {
   j += (raceRunning ? "true" : "false");
   j += ",\"stage\":";
   j += String(currentStageId);
+  j += ",\"wheelPerimeter\":";
+  j += String(wheelPerimeter, 3);
+
+  j += ",\"magnetCount\":";
+  j += String(magnetCount);
+
+  j += ",\"basePulseKm\":";
+  j += String(basePulseKm, 8);
+
+  j += ",\"factorW\":";
+  j += String(factorW, 6);
+
+  j += ",\"finalPulseKm\":";
+  j += String(basePulseKm * factorW, 8);
+
   j += "}";
   return j;
 }
@@ -375,6 +390,39 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
                 APLICAR POR RUEDA
             </button>
         </div>
+
+        <hr style="margin:25px 0; border-color:#444;">
+
+        <div style="background:#080808; padding:15px; border:1px solid #333;">
+            <div class="label">DATOS ACTUALES DE CALIBRACIÓN</div>
+
+            <div style="margin-top:10px;">
+                Perímetro rueda: 
+                <span id="calib-perimeter" style="color:#00ffff;">0.000</span> m
+            </div>
+
+            <div style="margin-top:5px;">
+                Imanes: 
+                <span id="calib-magnets" style="color:#00ffff;">0</span>
+            </div>
+
+            <div style="margin-top:5px;">
+                Km por pulso (base): 
+                <span id="calib-base" style="color:#ffff00;">0.00000000</span>
+            </div>
+
+            <div style="margin-top:5px;">
+                Factor ajuste: 
+                <span id="calib-factor" style="color:#ff9900;">0.000000</span>
+            </div>
+
+            <div style="margin-top:5px; font-weight:bold;">
+                Km finales por pulso: 
+                <span id="calib-final" style="color:#00ff00;">0.00000000</span>
+            </div>
+        </div>
+
+
     </div>
 
     <div id="view-pilot" class="view">
@@ -446,6 +494,24 @@ socket.onmessage = (event) => {
     // calib
     if(isCalibrating) {
       document.getElementById('calib-trip').innerText = Number(msg.real).toFixed(3);
+    }
+
+    // --- datos calibración ---
+    if(msg.wheelPerimeter !== undefined){
+        document.getElementById('calib-perimeter').innerText =
+            Number(msg.wheelPerimeter).toFixed(3);
+
+        document.getElementById('calib-magnets').innerText =
+            msg.magnetCount;
+
+        document.getElementById('calib-base').innerText =
+            Number(msg.basePulseKm).toFixed(8);
+
+        document.getElementById('calib-factor').innerText =
+            Number(msg.factorW).toFixed(6);
+
+        document.getElementById('calib-final').innerText =
+            Number(msg.finalPulseKm).toFixed(8);
     }
 
   } else if(msg.t === "stages") {
@@ -688,29 +754,29 @@ static void handleCommand(const String& msg) {
   }
   if (msg == "RESET") {
     raceRunning = false;
-    distReal = 0.0f;
+    distReal_mm = 0;
     distIdeal = 0.0f;
     totalRaceMs = 0;
-    partialOffset = 0.0f;
+    partialOffset_mm = 0;
     return;
   }
   if (msg == "P_RESET") {
-    partialOffset = distReal;
+    partialOffset_mm = distReal_mm;
     return;
   }
 
   // --- Calibración ---
   if (msg == "C_START") {
-    distReal = 0.0f;
-    partialOffset = 0.0f;
+    distReal_mm = 0;
+    partialOffset_mm = 0;
     return;
   }
   if (msg.startsWith("F")) {
     float officialMeters = msg.substring(1).toFloat();
-    if (distReal > 0.0f) {
+    if (distReal_mm > 0) {
       // Ajuste compatible con tu planteamiento
       // Nota: distReal está en km -> distReal*1000 = metros
-      float measuredMeters = (distReal * 1000.0f);
+      float measuredMeters = (distReal_mm * 1000.0f);
       factorW = factorW * (officialMeters / measuredMeters);
     }
     return;
@@ -718,13 +784,15 @@ static void handleCommand(const String& msg) {
 
   // --- Sync distancia / Ajuste ---
   if (msg.startsWith("S")) {
-    distReal = msg.substring(1).toFloat();
+    float km = msg.substring(1).toFloat();
+    distReal_mm = (long)(km * 1000000.0);
     // Mantener parcial coherente (que no “salte”)
-    partialOffset = distReal - distPartial();
+    partialOffset_mm = distReal_mm;
     return;
   }
   if (msg.startsWith("A")) {
-    distReal += msg.substring(1).toFloat();
+     float km = msg.substring(1).toFloat();
+    distReal_mm += (long)(km * 1000000.0);
     return;
   }
 
@@ -901,7 +969,13 @@ void loop() {
 
   if (p > 0) {
     // km += factorW * base * pulsos
-    distReal += (factorW * basePulseKm * (float)p);
+     // milímetros por pulso
+    long mm_per_pulse = (long)((wheelPerimeter * 1000.0) / magnetCount);
+
+    // aplicar factorW
+    mm_per_pulse = (long)(mm_per_pulse * factorW);
+
+    distReal_mm += mm_per_pulse * p;
   }
 
   // --- motor de carrera ---
