@@ -10,19 +10,19 @@ ESP8266WebServer server(80);
 WebSocketsServer webSocket(81);
 
 // ---------------- SENSOR ----------------
-const int sensorPin = 4; // D2 (GPIO4)
+const int sensorPin = 4;  // D2 (GPIO4)
 volatile int pulsesQueued = 0;
 volatile unsigned long lastDebounceTime = 0;
 const int debounceDelay = 15;
 
 // ---------------- BACKEND RALLY ----------------
 long distReal_mm = 0;
-long partialOffset_mm = 0;   // offset para parcial
+long partialOffset_mm = 0;  // offset para parcial
 float distIdeal = 0.0f;
-float factorW  = 1.0000f;         // calibración
-float basePulseKm = 0.001050f; // tu factor base por pulso (km)
+float factorW = 1.0000f;        // calibración
+float basePulseKm = 0.001050f;  // tu factor base por pulso (km)
 
-float wheelPerimeter = 2.0f;   // metros
+float wheelPerimeter = 2.0f;  // metros
 int magnetCount = 1;
 
 
@@ -32,18 +32,18 @@ unsigned long totalRaceMs = 0;
 
 // ---------------- RUTAS/TRAMOS EN BACKEND (Opción B) ----------------
 static const int MAX_STAGES = 12;
-static const int MAX_SEGS   = 200;
+static const int MAX_SEGS = 200;
 
 struct Segment {
-  float km;    // km objetivo (sobre ideal)
-  float speed; // km/h
+  float km;     // km objetivo (sobre ideal)
+  float speed;  // km/h
 };
 
 struct Stage {
   uint32_t id;
-  String   name;
-  Segment  segs[MAX_SEGS];
-  int      segCount;
+  String name;
+  Segment segs[MAX_SEGS];
+  int segCount;
 };
 
 Stage stages[MAX_STAGES];
@@ -216,9 +216,16 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#000000">
+
     <title>Rally Pro Sim - V26 Backend Total</title>
     <style>
+        html, body {
+            height: 100%;
+        }
+
         body { font-family: 'Courier New', monospace; background: #000; color: #fff; text-align: center; margin: 0; touch-action: manipulation; overflow-x: hidden; padding-bottom: 80px; }
         .header-clock { background: #1a1a1a; padding: 5px; border-bottom: 2px solid #ff9900; display: flex; justify-content: space-around; align-items: center; }
         .clock-val { font-size: 1.5rem; color: #ff9900; font-weight: bold; }
@@ -252,9 +259,62 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
         .control-item { flex: 1; display: flex; flex-direction: column; align-items: center; }
         .btn-wakelock { background: #222; color: #666; font-size: 0.6rem; padding: 6px; margin-top: 5px; width: 100%; border: 1px solid #444; border-radius: 4px; transition: 0.3s; }
         .btn-wakelock.active { background: #004400; color: #0f0; border-color: #0f0; font-weight: bold; box-shadow: 0 0 5px #00ff00; }
-        #pilot-ui { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 2000; flex-direction: column; justify-content: center; align-items: center; }
+        #pilot-ui {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: #000;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #pilot-dist {
+            flex: 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: clamp(3rem, 20vw, 12rem);
+        }
+
+        #pilot-error-container {
+            flex: 2;
+            width: 90%;
+            margin: 0 auto;
+        }
+
+        #pilot-err {
+            flex: 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: clamp(2rem, 15vw, 10rem);
+        }
+
+        #pilot-ui button {
+            flex: 1;
+        }
+
+
         #throttle-container { display: none; }
         table td { border-bottom: 1px solid #222; padding: 6px; }
+
+        @media screen and (orientation: landscape) {
+
+            #pilot-dist {
+                font-size: 8vh;
+            }
+
+            #pilot-err {
+                font-size: 6vh;
+            }
+
+            #pilot-error-container {
+                height: 12vh;
+            }
+
+        }
+
     </style>
 </head>
 <body>
@@ -430,12 +490,12 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
     </div>
 
     <div id="pilot-ui">
-        <div id="pilot-dist" style="font-size:28vw; font-weight:bold; color:#00ffff;">0.000</div>
+        <div id="pilot-dist" style="font-weight:bold; color:#00ffff;">0.000</div>
         <div id="pilot-error-container" class="error-bar-system" style="width:90%; height:80px; margin:20px 0;">
             <div class="center-line"></div>
             <div id="pilot-cursor" class="cursor-line"></div>
         </div>
-        <div id="pilot-err" style="font-size:18vw; font-weight:bold;">0</div>
+        <div id="pilot-err" style="font-weight:bold;">0</div>
         <button onclick="exitPilotMode()" style="color:#444; margin-top:20px;">CERRAR</button>
     </div>
 
@@ -791,7 +851,7 @@ static void handleCommand(const String& msg) {
     return;
   }
   if (msg.startsWith("A")) {
-     float km = msg.substring(1).toFloat();
+    float km = msg.substring(1).toFloat();
     distReal_mm += (long)(km * 1000000.0);
     return;
   }
@@ -820,19 +880,19 @@ static void handleCommand(const String& msg) {
 
   if (msg.startsWith("STAGE_NAME:")) {
     // "STAGE_NAME:<id>:<urlencoded>"
-    int p1 = msg.indexOf(':');            // after STAGE_NAME
-    int p2 = msg.indexOf(':', p1 + 1);    // after id
+    int p1 = msg.indexOf(':');          // after STAGE_NAME
+    int p2 = msg.indexOf(':', p1 + 1);  // after id
     if (p2 < 0) return;
     uint32_t id = (uint32_t)msg.substring(p1 + 1, p2).toInt();
     String enc = msg.substring(p2 + 1);
-    enc.replace("+", "%20"); // por si acaso
+    enc.replace("+", "%20");  // por si acaso
     // decode muy básico %XX
     String name;
     name.reserve(enc.length());
     for (unsigned int i = 0; i < enc.length(); i++) {
       if (enc[i] == '%' && i + 2 < enc.length()) {
-        char hex[3] = { enc[i+1], enc[i+2], 0 };
-        char c = (char) strtoul(hex, nullptr, 16);
+        char hex[3] = { enc[i + 1], enc[i + 2], 0 };
+        char c = (char)strtoul(hex, nullptr, 16);
         name += c;
         i += 2;
       } else {
@@ -849,13 +909,13 @@ static void handleCommand(const String& msg) {
 
   if (msg.startsWith("SEG_ADD:")) {
     // "SEG_ADD:<stageId>:<km>:<spd>"
-    int p1 = msg.indexOf(':'); // after SEG_ADD
-    int p2 = msg.indexOf(':', p1+1);
-    int p3 = msg.indexOf(':', p2+1);
+    int p1 = msg.indexOf(':');  // after SEG_ADD
+    int p2 = msg.indexOf(':', p1 + 1);
+    int p3 = msg.indexOf(':', p2 + 1);
     if (p2 < 0 || p3 < 0) return;
-    uint32_t id = (uint32_t)msg.substring(p1+1, p2).toInt();
-    float km = msg.substring(p2+1, p3).toFloat();
-    float spd = msg.substring(p3+1).toFloat();
+    uint32_t id = (uint32_t)msg.substring(p1 + 1, p2).toInt();
+    float km = msg.substring(p2 + 1, p3).toFloat();
+    float spd = msg.substring(p3 + 1).toFloat();
 
     Stage* st = findStageById(id);
     if (!st) return;
@@ -872,15 +932,15 @@ static void handleCommand(const String& msg) {
   if (msg.startsWith("SEG_DEL:")) {
     // "SEG_DEL:<stageId>:<idx>"
     int p1 = msg.indexOf(':');
-    int p2 = msg.indexOf(':', p1+1);
+    int p2 = msg.indexOf(':', p1 + 1);
     if (p2 < 0) return;
-    uint32_t id = (uint32_t)msg.substring(p1+1, p2).toInt();
-    int idx = msg.substring(p2+1).toInt();
+    uint32_t id = (uint32_t)msg.substring(p1 + 1, p2).toInt();
+    int idx = msg.substring(p2 + 1).toInt();
     Stage* st = findStageById(id);
     if (!st) return;
     if (idx < 0 || idx >= st->segCount) return;
 
-    for (int i = idx; i < st->segCount - 1; i++) st->segs[i] = st->segs[i+1];
+    for (int i = idx; i < st->segCount - 1; i++) st->segs[i] = st->segs[i + 1];
     st->segCount--;
     stagesDirty = true;
     return;
@@ -904,7 +964,7 @@ static void handleCommand(const String& msg) {
       // km por pulso
       basePulseKm = (wheelPerimeter / magnetCount) / 1000.0f;
 
-      factorW = 1.0f; // reset factor extra
+      factorW = 1.0f;  // reset factor extra
     }
     return;
   }
@@ -920,8 +980,7 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t lengt
 
     String s2 = buildTeleJson();
     webSocket.sendTXT(num, s2);
-  }
-  else if (type == WStype_TEXT) {
+  } else if (type == WStype_TEXT) {
     String msg = String((char*)payload);
     handleCommand(msg);
     // responder rápido con tele tras comandos
@@ -932,7 +991,6 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t lengt
       String st = buildStagesJson();
       webSocket.sendTXT(num, st);
     }
-
   }
 }
 
@@ -964,12 +1022,15 @@ void loop() {
   // --- integrar pulsos ---
   int p = 0;
   noInterrupts();
-  if (pulsesQueued > 0) { p = pulsesQueued; pulsesQueued = 0; }
+  if (pulsesQueued > 0) {
+    p = pulsesQueued;
+    pulsesQueued = 0;
+  }
   interrupts();
 
   if (p > 0) {
     // km += factorW * base * pulsos
-     // milímetros por pulso
+    // milímetros por pulso
     long mm_per_pulse = (long)((wheelPerimeter * 1000.0) / magnetCount);
 
     // aplicar factorW
@@ -980,12 +1041,12 @@ void loop() {
 
   // --- motor de carrera ---
   unsigned long dtMs = now - lastLoopMs;
-  if (dtMs > 500) dtMs = 500; // clamp
+  if (dtMs > 500) dtMs = 500;  // clamp
   float dt = dtMs / 1000.0f;
 
   if (raceRunning) {
     totalRaceMs += dtMs;
-    float spd = backendCurrentSpeedKmh(); // km/h desde la tabla del tramo
+    float spd = backendCurrentSpeedKmh();  // km/h desde la tabla del tramo
     distIdeal += (spd / 3600.0f) * dt;
   }
 
