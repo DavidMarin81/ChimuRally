@@ -277,9 +277,10 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
         }
 
         #pilot-error-container {
+            display: flex;
             flex: 2;
-            width: 90%;
-            margin: 0 auto;
+            height:80px;
+
         }
 
         #pilot-err {
@@ -299,6 +300,9 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
         table td { border-bottom: 1px solid #222; padding: 6px; }
 
         @media screen and (orientation: landscape) {
+            #pilot-ui {
+                width: 100%;
+            }
 
             #pilot-dist {
                 font-size: 8vh;
@@ -309,7 +313,9 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
             }
 
             #pilot-error-container {
+                display: flex;
                 height: 12vh;
+                width: 98%;
             }
 
         }
@@ -490,7 +496,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
 
     <div id="pilot-ui">
         <div id="pilot-dist" style="font-weight:bold; color:#00ffff;">0.000</div>
-        <div id="pilot-error-container" class="error-bar-system" style="width:90%; height:80px; margin:20px 0;">
+        <div id="pilot-error-container" class="error-bar-system">
             <div class="center-line"></div>
             <div id="pilot-cursor" class="cursor-line"></div>
         </div>
