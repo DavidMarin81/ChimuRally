@@ -853,14 +853,18 @@ static void handleCommand(const String& msg) {
     partialOffset_mm = 0;
     return;
   }
+  
   if (msg.startsWith("F")) {
     float officialMeters = msg.substring(1).toFloat();
-    if (distReal_mm > 0) {
-      // Ajuste compatible con tu planteamiento
-      // Nota: distReal está en km -> distReal*1000 = metros
-      float measuredMeters = (distReal_mm * 1000.0f);
-      factorW = factorW * (officialMeters / measuredMeters);
+
+    if (distReal_mm > 0 && officialMeters > 0) {
+
+        float measuredMeters = distReal_mm / 1000.0f;
+
+        // Nuevo factor = factor actual × (real / medido)
+        factorW = factorW * (officialMeters / measuredMeters);
     }
+
     return;
   }
 
