@@ -26,6 +26,9 @@ float basePulseKm = 0.001050f;  // tu factor base por pulso (km)
 float wheelPerimeter = 2.0f;  // metros
 int magnetCount = 1;
 
+float lastOfficialMeters = 0.0f;
+float lastMeasuredMeters = 0.0f;
+float lastCorrectionPercent = 0.0f;
 
 bool raceRunning = false;
 unsigned long lastLoopMs = 0;
@@ -196,6 +199,15 @@ static String buildTeleJson() {
 
   j += ",\"finalPulseKm\":";
   j += String(basePulseKm * factorW, 8);
+
+  j += ",\"lastOfficial\":";
+  j += String(lastOfficialMeters, 2);
+
+  j += ",\"lastMeasured\":";
+  j += String(lastMeasuredMeters, 2);
+
+  j += ",\"lastCorrection\":";
+  j += String(lastCorrectionPercent, 2);
 
   j += "}";
   return j;
@@ -855,18 +867,26 @@ static void handleCommand(const String& msg) {
   }
   
   if (msg.startsWith("F")) {
+
     float officialMeters = msg.substring(1).toFloat();
 
     if (distReal_mm > 0 && officialMeters > 0) {
 
         float measuredMeters = distReal_mm / 1000.0f;
 
-        // Nuevo factor = factor actual × (real / medido)
-        factorW = factorW * (officialMeters / measuredMeters);
+        lastOfficialMeters = officialMeters;
+        lastMeasuredMeters = measuredMeters;
+
+        float correction = (officialMeters / measuredMeters);
+
+        lastCorrectionPercent = (correction - 1.0f) * 100.0f;
+
+        factorW = factorW * correction;
     }
 
     return;
-  }
+}
+
 
   // --- Sync distancia / Ajuste ---
   if (msg.startsWith("S")) {
