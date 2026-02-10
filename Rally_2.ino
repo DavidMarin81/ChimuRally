@@ -593,6 +593,8 @@ socket.onmessage = (event) => {
     }
 
   } else if(msg.t === "stages") {
+    if(!rallyData.length) return;
+    
     rallyData = msg.stages || [];
     currentStageId = msg.current || null;
     renderStageSelect();
@@ -1032,11 +1034,6 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t lengt
     // responder rápido con tele tras comandos
     String t = buildTeleJson();
     webSocket.sendTXT(num, t);
-
-    if (stagesDirty) {
-      String st = buildStagesJson();
-      webSocket.sendTXT(num, st);
-    }
   }
 }
 
@@ -1107,7 +1104,7 @@ void loop() {
 
   // --- broadcast stages si cambiaron ---
   static unsigned long lastStages = 0;
-  if (stagesDirty && (now - lastStages >= 150)) {
+  if (stagesDirty) {
     broadcastStages();
     lastStages = now;
   }
