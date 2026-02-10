@@ -1,5 +1,4 @@
-// Chimu aprende informatica
-// Y aprende git
+// Y espabila
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <WebSocketsServer.h>
