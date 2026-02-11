@@ -500,6 +500,38 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
             </div>
         </div>
 
+        <hr style="margin:25px 0; border-color:#444;">
+
+        <div style="background:#111; padding:10px; margin-top:10px; text-align:left; border:1px solid #333;">
+          <div class="label">HITOS (CALIB)</div>
+
+          <div style="margin-bottom:10px;">
+            <label><input type="radio" name="calibInputMode" value="speed" checked onchange="toggleCalibInputMode()"> MEDIA</label>
+            <label style="margin-left:10px;"><input type="radio" name="calibInputMode" value="time" onchange="toggleCalibInputMode()"> TABLA</label>
+          </div>
+
+          KM:
+          <input type="number" id="calib-input-km" step="0.001" style="width:90px;">
+
+          <span id="calib-mode-speed-container">
+            SPD:
+            <input type="number" id="calib-input-spd" step="0.1" style="width:80px;">
+          </span>
+
+          <span id="calib-mode-time-container" style="display:none;">
+            M: <input type="number" id="calib-table-m" style="width:60px;">
+            S: <input type="number" id="calib-table-s" style="width:60px;">
+          </span>
+
+          <button onclick="addSegmentFromCalib()"
+                  style="background:#ff9900; color:#000; padding:10px; width:100%; margin-top:10px;">
+            AÑADIR HITO
+          </button>
+        </div>
+
+        <table style="width:100%; margin-top:10px; border-collapse: collapse;">
+          <tbody id="calib-segments-body"></tbody>
+        </table>
 
     </div>
 
@@ -592,14 +624,23 @@ socket.onmessage = (event) => {
             Number(msg.finalPulseKm).toFixed(8);
     }
 
-  } else if(msg.t === "stages") {
-    if(!rallyData.length) return;
-    
+    } else if(msg.t === "stages") {
+
+    console.log("STAGES RECIBIDO: ", msg);
+    console.log("STAGE ACTUAL:", currentStageId);
+    console.log("RALLY DATA:", rallyData);
+
+
     rallyData = msg.stages || [];
     currentStageId = msg.current || null;
+
     renderStageSelect();
-    loadStageData();
+    loadStageData();  // ← esto ya pinta RUTAS
+
+    let st = rallyData.find(x=> Number(x.id) === Number(currentStageId));
+    renderCalibSegmentsTable(st ? (st.segments || []) : []);
   }
+
 };
 
 // --- Reloj visual (solo UI) ---
@@ -711,7 +752,7 @@ function renderStageSelect(){
   });
 }
 function loadStageData(){
-  let st = rallyData.find(x=>x.id==currentStageId);
+  let st = rallyData.find(x=> Number(x.id) === Number(currentStageId));
   if(!st) return;
   document.getElementById('stage-name-input').value = st.name;
   renderSegmentsTable(st.segments || []);
@@ -721,41 +762,135 @@ function toggleInputMode(){
   document.getElementById('mode-speed-container').style.display = (m==='speed')?'inline':'none';
   document.getElementById('mode-time-container').style.display  = (m==='time')?'inline':'none';
 }
+
 function addSegment(){
   if(!currentStageId) return;
-  const mode=document.querySelector('input[name="inputMode"]:checked').value;
+
+  const mode = document.querySelector('input[name="inputMode"]:checked').value;
   const km = parseFloat(document.getElementById('input-km').value);
   if(isNaN(km)) return;
 
   let spd = 0;
-  if(mode === "speed") {
+
+  if(mode === "speed"){
     spd = parseFloat(document.getElementById('input-spd').value);
     if(isNaN(spd)) return;
   } else {
-    // modo tabla: M y S -> velocidad equivalente (km/h) para 1km en ese tiempo
     const mm = parseFloat(document.getElementById('table-m').value);
     const ss = parseFloat(document.getElementById('table-s').value);
     if(isNaN(mm) || isNaN(ss)) return;
-    const totalSec = (mm*60)+ss;
+
+    const totalSec = (mm * 60) + ss;
     if(totalSec <= 0) return;
-    spd = 3600 / totalSec; // km/h si 1km tarda totalSec
+
+    spd = 3600 / totalSec;
+  }
+
+  socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
+  console.log("SEG_ADD enviado");
+
+  document.getElementById('input-km').value = "";
+  document.getElementById('input-spd').value = "";
+  document.getElementById('table-m').value = "";
+  document.getElementById('table-s').value = "";
+}
+
+
+function addSegmentFromCalib(){
+  if(!currentStageId) return;
+
+  const mode = document.querySelector('input[name="calibInputMode"]:checked').value;
+  const km = parseFloat(document.getElementById('calib-input-km').value);
+  if(isNaN(km)) return;
+
+  let spd = 0;
+  if(mode === "speed"){
+    spd = parseFloat(document.getElementById('calib-input-spd').value);
+    if(isNaN(spd)) return;
+  } else {
+    const mm = parseFloat(document.getElementById('calib-table-m').value);
+    const ss = parseFloat(document.getElementById('calib-table-s').value);
+    if(isNaN(mm) || isNaN(ss)) return;
+    const totalSec = (mm*60) + ss;
+    if(totalSec <= 0) return;
+    spd = 3600 / totalSec;
   }
 
   socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
 
   // limpiar
-  document.getElementById('input-km').value="";
-  if(mode==="speed") document.getElementById('input-spd').value="";
+  document.getElementById('calib-input-km').value = "";
+  document.getElementById('calib-input-spd').value = "";
+  document.getElementById('calib-table-m').value = "";
+  document.getElementById('calib-table-s').value = "";
 }
-function renderSegmentsTable(seg){
-  const b=document.getElementById('segments-body');
-  b.innerHTML="";
+
+function renderCalibSegmentsTable(seg){
+  const b = document.getElementById('calib-segments-body');
+  b.innerHTML = "";
+
+  if(!seg || seg.length === 0){
+    b.innerHTML = `
+      <tr><td colspan="3" style="color:#666; padding:10px;">SIN HITOS</td></tr>
+    `;
+    return;
+  }
+
   seg.forEach((g,i)=>{
-    const tr=document.createElement("tr");
-    tr.innerHTML = `<td>KM ${Number(g.km).toFixed(3)}</td><td>${Number(g.speed).toFixed(1)} km/h</td><td><button onclick="delSeg(${i})" style="color:red; background:#111; border:1px solid #444; padding:6px;">X</button></td>`;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${Number(g.km).toFixed(3)} km</td>
+      <td>${Number(g.speed).toFixed(1)} km/h</td>
+      <td>
+        <button onclick="delSeg(${i})"
+                style="background:#220000;color:#ff4444;border:1px solid #aa0000;padding:6px 8px;border-radius:4px;">
+          🗑
+        </button>
+      </td>
+    `;
     b.appendChild(tr);
   });
 }
+
+function renderSegmentsTable(seg){
+
+  const b = document.getElementById('segments-body');
+  b.innerHTML = "";
+
+  if(!seg || seg.length === 0){
+    b.innerHTML = `
+      <tr>
+        <td colspan="3" style="color:#666; padding:10px;">
+          SIN HITOS
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  seg.forEach((g,i)=>{
+
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${Number(g.km).toFixed(3)} km</td>
+      <td>${Number(g.speed).toFixed(1)} km/h</td>
+      <td>
+        <button onclick="delSeg(${i})"
+                style="background:#220000;
+                       color:#ff4444;
+                       border:1px solid #aa0000;
+                       padding:6px 8px;
+                       border-radius:4px;">
+          🗑
+        </button>
+      </td>
+    `;
+
+    b.appendChild(tr);
+  });
+}
+
 function delSeg(i){
   if(!currentStageId) return;
   socket.send("SEG_DEL:" + currentStageId + ":" + i);
@@ -830,193 +965,209 @@ window.addEventListener('load', () => {
 </html>)=====";
 
 // ---------------- WebSocket parsing ----------------
-static void handleCommand(const String& msg) {
+static void handleCommand(String msg) {
+
+  msg.trim();
   ensureDefaultStage();
 
+  // =========================
+  // GET ALL
+  // =========================
   if (msg == "GET_ALL") {
-    stagesDirty = true;
+    String s1 = buildStagesJson();
+    webSocket.broadcastTXT(s1);
+
+    String s2 = buildTeleJson();
+    webSocket.broadcastTXT(s2);
+
+    stagesDirty = false;
     return;
   }
 
-  // --- Carrera ---
-  if (msg == "START") {
-    raceRunning = true;
-    lastLoopMs = millis();
-    return;
-  }
-  if (msg == "STOP") {
-    raceRunning = false;
-    return;
-  }
-  if (msg == "RESET") {
-    raceRunning = false;
-    distReal_mm = 0;
-    distIdeal = 0.0f;
-    totalRaceMs = 0;
-    partialOffset_mm = 0;
-    return;
-  }
-  if (msg == "P_RESET") {
-    partialOffset_mm = distReal_mm;
-    return;
-  }
-
-  // --- Calibración ---
-  if (msg == "C_START") {
-    distReal_mm = 0;
-    partialOffset_mm = 0;
-    return;
-  }
-  
-  if (msg.startsWith("F")) {
-
-    float officialMeters = msg.substring(1).toFloat();
-
-    if (distReal_mm > 0 && officialMeters > 0) {
-
-        float measuredMeters = distReal_mm / 1000.0f;
-
-        lastOfficialMeters = officialMeters;
-        lastMeasuredMeters = measuredMeters;
-
-        float correction = (officialMeters / measuredMeters);
-
-        lastCorrectionPercent = (correction - 1.0f) * 100.0f;
-
-        factorW = factorW * correction;
-    }
-
-    return;
-}
-
-
-  // --- Sync distancia / Ajuste ---
-  if (msg.startsWith("S")) {
-    float km = msg.substring(1).toFloat();
-    distReal_mm = (long)(km * 1000000.0);
-    // Mantener parcial coherente (que no “salte”)
-    partialOffset_mm = distReal_mm;
-    return;
-  }
-  if (msg.startsWith("A")) {
-    float km = msg.substring(1).toFloat();
-    distReal_mm += (long)(km * 1000000.0);
-    return;
-  }
-
-  // --- Rutas/tramos (Opción B) ---
-  if (msg == "STAGE_NEW") {
-    if (stageCount >= MAX_STAGES) return;
-    uint32_t id = (uint32_t)millis() + (uint32_t)random(1000, 9999);
-    stages[stageCount].id = id;
-    stages[stageCount].name = "TRAMO " + String(stageCount + 1);
-    stages[stageCount].segCount = 0;
-    stageCount++;
-    currentStageId = id;
-    stagesDirty = true;
-    return;
-  }
-
-  if (msg.startsWith("STAGE_SEL:")) {
-    uint32_t id = (uint32_t)msg.substring(strlen("STAGE_SEL:")).toInt();
-    if (findStageById(id)) {
-      currentStageId = id;
-      stagesDirty = true;
-    }
-    return;
-  }
-
-  if (msg.startsWith("STAGE_NAME:")) {
-    // "STAGE_NAME:<id>:<urlencoded>"
-    int p1 = msg.indexOf(':');          // after STAGE_NAME
-    int p2 = msg.indexOf(':', p1 + 1);  // after id
-    if (p2 < 0) return;
-    uint32_t id = (uint32_t)msg.substring(p1 + 1, p2).toInt();
-    String enc = msg.substring(p2 + 1);
-    enc.replace("+", "%20");  // por si acaso
-    // decode muy básico %XX
-    String name;
-    name.reserve(enc.length());
-    for (unsigned int i = 0; i < enc.length(); i++) {
-      if (enc[i] == '%' && i + 2 < enc.length()) {
-        char hex[3] = { enc[i + 1], enc[i + 2], 0 };
-        char c = (char)strtoul(hex, nullptr, 16);
-        name += c;
-        i += 2;
-      } else {
-        name += enc[i];
-      }
-    }
-    Stage* st = findStageById(id);
-    if (st) {
-      st->name = name;
-      stagesDirty = true;
-    }
-    return;
-  }
-
+  // =========================
+  // SEG_ADD  (ANTES que "S")
+  // =========================
   if (msg.startsWith("SEG_ADD:")) {
-    // "SEG_ADD:<stageId>:<km>:<spd>"
-    int p1 = msg.indexOf(':');  // after SEG_ADD
+
+    int p1 = msg.indexOf(':');
     int p2 = msg.indexOf(':', p1 + 1);
     int p3 = msg.indexOf(':', p2 + 1);
-    if (p2 < 0 || p3 < 0) return;
-    uint32_t id = (uint32_t)msg.substring(p1 + 1, p2).toInt();
+
     float km = msg.substring(p2 + 1, p3).toFloat();
     float spd = msg.substring(p3 + 1).toFloat();
 
-    Stage* st = findStageById(id);
+    Stage* st = findStageById(currentStageId);
     if (!st) return;
     if (st->segCount >= MAX_SEGS) return;
 
     st->segs[st->segCount].km = km;
     st->segs[st->segCount].speed = spd;
     st->segCount++;
+
     sortSegments(st);
     stagesDirty = true;
+
+    Serial.print("Segmento añadido. Total: ");
+    Serial.println(st->segCount);
+
     return;
   }
 
+  // =========================
+  // SEG_DEL
+  // =========================
   if (msg.startsWith("SEG_DEL:")) {
-    // "SEG_DEL:<stageId>:<idx>"
+
     int p1 = msg.indexOf(':');
     int p2 = msg.indexOf(':', p1 + 1);
-    if (p2 < 0) return;
-    uint32_t id = (uint32_t)msg.substring(p1 + 1, p2).toInt();
+
     int idx = msg.substring(p2 + 1).toInt();
-    Stage* st = findStageById(id);
+
+    Stage* st = findStageById(currentStageId);
     if (!st) return;
     if (idx < 0 || idx >= st->segCount) return;
 
-    for (int i = idx; i < st->segCount - 1; i++) st->segs[i] = st->segs[i + 1];
+    for (int i = idx; i < st->segCount - 1; i++)
+      st->segs[i] = st->segs[i + 1];
+
     st->segCount--;
+
     stagesDirty = true;
     return;
   }
 
-  // --- Calibración por perímetro ---
-  if (msg.startsWith("CALC_WHEEL:")) {
-    // Formato: CALC_WHEEL:<perimetro_metros>:<imanes>
+  // =========================
+  // STAGE_NEW
+  // =========================
+  if (msg == "STAGE_NEW") {
+
+    if (stageCount >= MAX_STAGES) return;
+
+    uint32_t id = (uint32_t)millis() + random(1000, 9999);
+
+    stages[stageCount].id = id;
+    stages[stageCount].name = "TRAMO " + String(stageCount + 1);
+    stages[stageCount].segCount = 0;
+
+    stageCount++;
+    currentStageId = id;
+    stagesDirty = true;
+
+    return;
+  }
+
+  // =========================
+  // STAGE_SEL
+  // =========================
+  if (msg.startsWith("STAGE_SEL:")) {
+
+    uint32_t id = msg.substring(strlen("STAGE_SEL:")).toInt();
+
+    if (findStageById(id)) {
+      currentStageId = id;
+      stagesDirty = true;
+    }
+
+    return;
+  }
+
+  // =========================
+  // STAGE_NAME
+  // =========================
+  if (msg.startsWith("STAGE_NAME:")) {
 
     int p1 = msg.indexOf(':');
     int p2 = msg.indexOf(':', p1 + 1);
-    if (p2 < 0) return;
 
-    float perim = msg.substring(p1 + 1, p2).toFloat();
-    int magnets = msg.substring(p2 + 1).toInt();
+    uint32_t id = msg.substring(p1 + 1, p2).toInt();
+    String name = msg.substring(p2 + 1);
 
-    if (perim > 0 && magnets > 0) {
-      wheelPerimeter = perim;
-      magnetCount = magnets;
-
-      // km por pulso
-      basePulseKm = (wheelPerimeter / magnetCount) / 1000.0f;
-
-      factorW = 1.0f;  // reset factor extra
+    Stage* st = findStageById(id);
+    if (st) {
+      st->name = name;
+      stagesDirty = true;
     }
+
+    return;
+  }
+
+  // =========================
+  // START / STOP / RESET
+  // =========================
+  if (msg == "START") {
+    raceRunning = true;
+    lastLoopMs = millis();
+    return;
+  }
+
+  if (msg == "STOP") {
+    raceRunning = false;
+    return;
+  }
+
+  if (msg == "RESET") {
+    raceRunning = false;
+    distReal_mm = 0;
+    distIdeal = 0;
+    totalRaceMs = 0;
+    partialOffset_mm = 0;
+    return;
+  }
+
+  if (msg == "P_RESET") {
+    partialOffset_mm = distReal_mm;
+    return;
+  }
+
+  // =========================
+  // CALIB START
+  // =========================
+  if (msg == "C_START") {
+    distReal_mm = 0;
+    partialOffset_mm = 0;
+    return;
+  }
+
+  // =========================
+  // FACTOR CALIB
+  // =========================
+  if (msg.startsWith("F")) {
+
+    float officialMeters = msg.substring(1).toFloat();
+
+    if (distReal_mm > 0 && officialMeters > 0) {
+
+      float measuredMeters = distReal_mm / 1000.0f;
+      float correction = officialMeters / measuredMeters;
+
+      factorW = factorW * correction;
+    }
+
+    return;
+  }
+
+  // =========================
+  // AJUSTE DISTANCIA  (ANTES que "S")
+  // =========================
+  if (msg.startsWith("A")) {
+
+    float km = msg.substring(1).toFloat();
+    distReal_mm += (long)(km * 1000000.0);
+    return;
+  }
+
+  // =========================
+  // SYNC DISTANCIA (AL FINAL)
+  // =========================
+  if (msg.startsWith("S")) {
+
+    float km = msg.substring(1).toFloat();
+    distReal_mm = (long)(km * 1000000.0);
+    partialOffset_mm = distReal_mm;
     return;
   }
 }
+
 
 // ---------------- WebSocket events ----------------
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
@@ -1029,16 +1180,39 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t lengt
     String s2 = buildTeleJson();
     webSocket.sendTXT(num, s2);
   } else if (type == WStype_TEXT) {
+
     String msg = String((char*)payload);
+
+    Serial.print("Mensaje WebSocket recibido: ");
+    Serial.println(msg);
+
     handleCommand(msg);
-    // responder rápido con tele tras comandos
+
+    // Forzar envío inmediato de stages tras SEG_ADD
+    if (msg.startsWith("SEG_ADD:") || 
+        msg.startsWith("SEG_DEL:") || 
+        msg.startsWith("STAGE_NEW") ||
+        msg.startsWith("STAGE_NAME:") ||
+        msg.startsWith("STAGE_SEL:")) {
+
+        String s = buildStagesJson();
+        webSocket.sendTXT(num, s);
+    }
+
+    // Siempre enviar tele
     String t = buildTeleJson();
     webSocket.sendTXT(num, t);
-  }
+}
+
 }
 
 // ---------------- Setup/Loop ----------------
 void setup() {
+
+  Serial.begin(115200);
+  delay(500);
+  Serial.println("Sistema iniciado");
+
   pinMode(sensorPin, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(sensorPin), sensorISR, RISING);
 
