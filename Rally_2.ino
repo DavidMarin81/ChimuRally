@@ -41,6 +41,7 @@ static const int MAX_SEGS = 200;
 struct Segment {
   float km;     // km objetivo (sobre ideal)
   float speed;  // km/h
+  float time;
 };
 
 struct Stage {
@@ -104,16 +105,28 @@ static void sortSegments(Stage* st) {
 }
 
 static float backendCurrentSpeedKmh() {
+
   Stage* st = findStageById(currentStageId);
   if (!st || st->segCount == 0) return 0.0f;
 
-  // Igual que tu JS: usa distIdeal para decidir el segmento vigente
-  float spd = st->segs[0].speed;
-  for (int i = 0; i < st->segCount; i++) {
-    if (distIdeal >= st->segs[i].km) spd = st->segs[i].speed;
-    else break;
+  // Si estamos antes del primer hito,
+  // usamos la velocidad del primer hito
+  if (distIdeal < st->segs[0].km) {
+    return st->segs[0].speed;
   }
-  return spd;
+
+  // Buscar en qué tramo estamos
+  for (int i = 0; i < st->segCount - 1; i++) {
+
+    if (distIdeal >= st->segs[i].km &&
+        distIdeal < st->segs[i+1].km) {
+
+      return st->segs[i+1].speed;
+    }
+  }
+
+  // Si estamos después del último hito
+  return st->segs[st->segCount - 1].speed;
 }
 
 double distPartial() {
@@ -152,6 +165,8 @@ static String buildStagesJson() {
       j += String(stages[i].segs[k].km, 3);
       j += ",\"speed\":";
       j += String(stages[i].segs[k].speed, 1);
+      j += ",\"time\":";
+      j += String(stages[i].segs[k].time, 1);
       j += "}";
     }
     j += "]}";
@@ -429,7 +444,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
                 <label><input type="radio" name="inputMode" value="speed" checked onchange="toggleInputMode()"> MEDIA</label>
                 <label><input type="radio" name="inputMode" value="time" onchange="toggleInputMode()"> TABLA</label>
             </div>
-            KM: 
+            Metros: 
             <input type="number" id="input-km" step="0.001" style="width:80px;">
             <span id="mode-speed-container">SPD: <input type="number" id="input-spd" step="0.1" style="width:70px;"></span>
             <span id="mode-time-container" style="display:none;">M: <input type="number" id="table-m" style="width:50px;"> S: <input type="number" id="table-s" style="width:50px;"></span>
@@ -511,7 +526,7 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
             <label style="margin-left:10px;"><input type="radio" name="calibInputMode" value="time" onchange="toggleCalibInputMode()"> TABLA</label>
           </div>
 
-          KM:
+          Metros:
           <input type="number" id="calib-input-km" step="0.001" style="width:90px;">
 
           <span id="calib-mode-speed-container">
@@ -773,52 +788,75 @@ function addSegment(){
   let st = rallyData.find(x => Number(x.id) === Number(currentStageId));
   if(!st) return;
 
+  const segs = Array.isArray(st.segments) ? st.segments : [];
+
   let lastKm = 0;
-  if(st.segments && st.segments.length > 0){
-      lastKm = Number(st.segments[st.segments.length - 1].km);
+  if(segs.length > 0){
+      lastKm = Number(segs[segs.length - 1].km);
   }
 
   let km = 0;
   let spd = 0;
 
   // =========================
-  // MODO MEDIA (acumulado)
+  // MODO MEDIA
   // =========================
   if(mode === "speed"){
 
     const metersInc = parseFloat(document.getElementById('input-km').value);
-    spd = parseFloat(document.getElementById('input-spd').value);
+    const speedVal  = parseFloat(document.getElementById('input-spd').value);
 
-    if(isNaN(metersInc) || isNaN(spd)) return;
+    if(!Number.isFinite(metersInc) || !Number.isFinite(speedVal)) return;
+    if(metersInc <= 0 || speedVal <= 0) return;
 
     km = lastKm + (metersInc / 1000.0);
-
-    document.getElementById('input-km').value = "";
-    document.getElementById('input-spd').value = "";
+    spd = speedVal;
   }
 
   // =========================
-  // MODO TABLA (incremental)
+  // MODO TABLA
   // =========================
   else {
 
-      const metersInc = parseFloat(document.getElementById('table-m').value);
-      const seconds   = parseFloat(document.getElementById('table-s').value);
+    const metersAbs = parseFloat(document.getElementById('input-km').value);
+    const minutes   = parseFloat(document.getElementById('table-m').value) || 0;
+    const seconds   = parseFloat(document.getElementById('table-s').value) || 0;
 
-      if(isNaN(metersInc) || isNaN(seconds) || metersInc <= 0 || seconds <= 0) return;
+    if(!Number.isFinite(metersAbs) ||
+      !Number.isFinite(minutes) ||
+      !Number.isFinite(seconds)) return;
 
-      // nueva distancia acumulada
-      km = lastKm + (metersInc / 1000.0);
+    if(metersAbs <= 0) return;
 
-      // calcular velocidad
-      spd = (metersInc / seconds) * 3.6;
+    const totalSec = (minutes * 60) + seconds;
+    if(totalSec <= 0) return;
 
-      document.getElementById('table-m').value = "";
-      document.getElementById('table-s').value = "";
+    const segs = Array.isArray(st.segments) ? st.segments : [];
+
+    let prevKmMeters = 0;
+    let prevTime = 0;
+
+    if(segs.length > 0){
+      prevKmMeters = Number(segs[segs.length - 1].km) * 1000;
+      prevTime = segs[segs.length - 1].time || 0;
+    }
+
+    const tramoDist = metersAbs - prevKmMeters;
+    const tramoTime = totalSec - prevTime;
+
+    if(tramoDist <= 0 || tramoTime <= 0) return;
+
+    spd = (tramoDist / tramoTime) * 3.6;
+    km = metersAbs / 1000.0;
+
   }
 
-  socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
+
+
+  socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1) + ":" + totalSec);
 }
+
+
 
 
 function addSegmentFromCalib(){
@@ -1017,9 +1055,11 @@ static void handleCommand(String msg) {
     int p1 = msg.indexOf(':');
     int p2 = msg.indexOf(':', p1 + 1);
     int p3 = msg.indexOf(':', p2 + 1);
+    int p4 = msg.indexOf(':', p3 + 1);
 
     float km = msg.substring(p2 + 1, p3).toFloat();
-    float spd = msg.substring(p3 + 1).toFloat();
+    float spd = msg.substring(p3 + 1, p4).toFloat();
+    float t   = msg.substring(p4 + 1).toFloat();
 
     Stage* st = findStageById(currentStageId);
     if (!st) return;
