@@ -429,7 +429,8 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
                 <label><input type="radio" name="inputMode" value="speed" checked onchange="toggleInputMode()"> MEDIA</label>
                 <label><input type="radio" name="inputMode" value="time" onchange="toggleInputMode()"> TABLA</label>
             </div>
-            KM: <input type="number" id="input-km" step="0.001" style="width:80px;">
+            KM: 
+            <input type="number" id="input-km" step="0.001" style="width:80px;">
             <span id="mode-speed-container">SPD: <input type="number" id="input-spd" step="0.1" style="width:70px;"></span>
             <span id="mode-time-container" style="display:none;">M: <input type="number" id="table-m" style="width:50px;"> S: <input type="number" id="table-s" style="width:50px;"></span>
             <button class="btn-add" onclick="addSegment()" style="background:#ff9900; color:#000; padding:10px; width:100%; margin-top:10px;">AÑADIR HITO</button>
@@ -764,37 +765,29 @@ function toggleInputMode(){
 }
 
 function addSegment(){
+
   if(!currentStageId) return;
 
-  const mode = document.querySelector('input[name="inputMode"]:checked').value;
-  const km = parseFloat(document.getElementById('input-km').value);
-  if(isNaN(km)) return;
+  let st = rallyData.find(x => Number(x.id) === Number(currentStageId));
+  if(!st) return;
 
-  let spd = 0;
-
-  if(mode === "speed"){
-    spd = parseFloat(document.getElementById('input-spd').value);
-    if(isNaN(spd)) return;
-  } else {
-    const mm = parseFloat(document.getElementById('table-m').value);
-    const ss = parseFloat(document.getElementById('table-s').value);
-    if(isNaN(mm) || isNaN(ss)) return;
-
-    const totalSec = (mm * 60) + ss;
-    if(totalSec <= 0) return;
-
-    spd = (km * 3600) / totalSec;
+  let lastKm = 0;
+  if(st.segments && st.segments.length > 0){
+      lastKm = Number(st.segments[st.segments.length - 1].km);
   }
 
+  const meters = parseFloat(document.getElementById('input-km').value);
+  const spd = parseFloat(document.getElementById('input-spd').value);
+
+  if(isNaN(meters) || isNaN(spd)) return;
+
+  let km = lastKm + (meters / 1000.0);
+
   socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
-  console.log("SEG_ADD enviado");
 
   document.getElementById('input-km').value = "";
   document.getElementById('input-spd').value = "";
-  document.getElementById('table-m').value = "";
-  document.getElementById('table-s').value = "";
 }
-
 
 function addSegmentFromCalib(){
   if(!currentStageId) return;
