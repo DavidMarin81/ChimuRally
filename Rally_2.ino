@@ -35,7 +35,7 @@ unsigned long lastLoopMs = 0;
 unsigned long totalRaceMs = 0;
 
 // ---------------- RUTAS/TRAMOS EN BACKEND (Opción B) ----------------
-static const int MAX_STAGES = 12;
+static const int MAX_STAGES = 20;
 static const int MAX_SEGS = 200;
 
 struct Segment {
@@ -783,7 +783,7 @@ function addSegment(){
     const totalSec = (mm * 60) + ss;
     if(totalSec <= 0) return;
 
-    spd = 3600 / totalSec;
+    spd = (km * 3600) / totalSec;
   }
 
   socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
@@ -813,7 +813,7 @@ function addSegmentFromCalib(){
     if(isNaN(mm) || isNaN(ss)) return;
     const totalSec = (mm*60) + ss;
     if(totalSec <= 0) return;
-    spd = 3600 / totalSec;
+    spd = (km * 3600) / totalSec;
   }
 
   socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
