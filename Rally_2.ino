@@ -768,6 +768,8 @@ function addSegment(){
 
   if(!currentStageId) return;
 
+  const mode = document.querySelector('input[name="inputMode"]:checked').value;
+
   let st = rallyData.find(x => Number(x.id) === Number(currentStageId));
   if(!st) return;
 
@@ -776,18 +778,48 @@ function addSegment(){
       lastKm = Number(st.segments[st.segments.length - 1].km);
   }
 
-  const meters = parseFloat(document.getElementById('input-km').value);
-  const spd = parseFloat(document.getElementById('input-spd').value);
+  let km = 0;
+  let spd = 0;
 
-  if(isNaN(meters) || isNaN(spd)) return;
+  // =========================
+  // MODO MEDIA (acumulado)
+  // =========================
+  if(mode === "speed"){
 
-  let km = lastKm + (meters / 1000.0);
+    const metersInc = parseFloat(document.getElementById('input-km').value);
+    spd = parseFloat(document.getElementById('input-spd').value);
+
+    if(isNaN(metersInc) || isNaN(spd)) return;
+
+    km = lastKm + (metersInc / 1000.0);
+
+    document.getElementById('input-km').value = "";
+    document.getElementById('input-spd').value = "";
+  }
+
+  // =========================
+  // MODO TABLA (incremental)
+  // =========================
+  else {
+
+      const metersInc = parseFloat(document.getElementById('table-m').value);
+      const seconds   = parseFloat(document.getElementById('table-s').value);
+
+      if(isNaN(metersInc) || isNaN(seconds) || metersInc <= 0 || seconds <= 0) return;
+
+      // nueva distancia acumulada
+      km = lastKm + (metersInc / 1000.0);
+
+      // calcular velocidad
+      spd = (metersInc / seconds) * 3.6;
+
+      document.getElementById('table-m').value = "";
+      document.getElementById('table-s').value = "";
+  }
 
   socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
-
-  document.getElementById('input-km').value = "";
-  document.getElementById('input-spd').value = "";
 }
+
 
 function addSegmentFromCalib(){
   if(!currentStageId) return;
@@ -997,7 +1029,6 @@ static void handleCommand(String msg) {
     st->segs[st->segCount].speed = spd;
     st->segCount++;
 
-    sortSegments(st);
     stagesDirty = true;
 
     Serial.print("Segmento añadido. Total: ");
