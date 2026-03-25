@@ -16,7 +16,7 @@ WebServer server(80);
 WebSocketsServer webSocket(81);
 
 // ---------------- SENSOR ----------------
-const int sensorPin = 4;  // D2 (GPIO4)
+const int sensorPin = 2;  // D2
 volatile int pulsesQueued = 0;
 volatile unsigned long lastDebounceTime = 0;
 const int debounceDelay = 15;
@@ -28,8 +28,8 @@ float distIdeal = 0.0f;
 float factorW = 1.0000f;        // calibración
 float basePulseKm = 0.001050f;  // tu factor base por pulso (km)
 
-float wheelPerimeter = 2.0f;  // metros
-int magnetCount = 1;
+float wheelPerimeter = 1.79f;  // metros
+int magnetCount = 2;
 
 float lastOfficialMeters = 0.0f;
 float lastMeasuredMeters = 0.0f;
@@ -434,12 +434,12 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
                 <label><input type="radio" name="inputMode" value="speed" checked onchange="toggleInputMode()"> MEDIA</label>
                 <label><input type="radio" name="inputMode" value="time" onchange="toggleInputMode()"> TABLA</label>
             </div>
-            Metros: 
+            KM: 
             <input type="number" id="input-km" step="0.001" style="width:80px;">
             <span id="mode-speed-container">Speed: <input type="number" id="input-spd" step="0.1" style="width:70px;"></span>
             <span id="mode-time-container" style="display:none;">
-              Minutos: <input type="number" id="table-m" style="width:50px;" value="0"> 
-              Segundos: <input type="number" id="table-s" style="width:50px;"></span>
+              Metros: <input type="number" id="table-m" style="width:50px;"> 
+              Sg: <input type="number" id="table-s" style="width:50px;"></span>
             <button class="btn-add" onclick="addSegment()" style="background:#ff9900; color:#000; padding:10px; width:100%; margin-top:10px;">AÑADIR HITO</button>
         </div>
         <table style="width:100%; margin-top:10px; border-collapse: collapse;"><tbody id="segments-body"></tbody></table>
@@ -507,39 +507,6 @@ const char PAGE_MAIN[] PROGMEM = R"=====(<!DOCTYPE html>
                 <span id="calib-final" style="color:#00ff00;">0.00000000</span>
             </div>
         </div>
-
-        <hr style="margin:25px 0; border-color:#444;">
-
-        <div style="background:#111; padding:10px; margin-top:10px; text-align:left; border:1px solid #333;">
-          <div class="label">HITOS (CALIB)</div>
-
-          <div style="margin-bottom:10px;">
-            <label><input type="radio" name="calibInputMode" value="speed" checked onchange="toggleCalibInputMode()"> MEDIA</label>
-            <label style="margin-left:10px;"><input type="radio" name="calibInputMode" value="time" onchange="toggleCalibInputMode()"> TABLA</label>
-          </div>
-          Metros:
-          <input type="number" id="calib-input-km" step="0.001" style="width:90px;">
-
-          <span id="calib-mode-speed-container">
-            Speed:
-            <input type="number" id="calib-input-spd" step="0.1" style="width:80px;">
-          </span>
-
-          <span id="calib-mode-time-container" style="display:none;">
-            Minutos: <input type="number" id="calib-table-m" style="width:60px;" value="0">
-            Segundos: <input type="number" id="calib-table-s" style="width:60px;">
-          </span>
-
-          <button onclick="addSegmentFromCalib()"
-                  style="background:#ff9900; color:#000; padding:10px; width:100%; margin-top:10px;">
-            AÑADIR HITO
-          </button>
-        </div>
-
-        <table style="width:100%; margin-top:10px; border-collapse: collapse;">
-          <tbody id="calib-segments-body"></tbody>
-        </table>
-
     </div>
 
     <div id="view-pilot" class="view">
@@ -783,88 +750,60 @@ function addSegment(){
 
   const mode = document.querySelector('input[name="inputMode"]:checked').value;
 
-  let st = rallyData.find(x => Number(x.id) === Number(currentStageId));
-  if(!st) return;
-
-  let lastKm = 0;
-  if(st.segments && st.segments.length > 0){
-      lastKm = Number(st.segments[st.segments.length - 1].km);
-  }
-
   let km = 0;
   let spd = 0;
 
   // =========================
-  // MODO MEDIA (acumulado)
+  // MODO MEDIA
   // =========================
   if(mode === "speed"){
 
-    const metersInc = parseFloat(document.getElementById('input-km').value);
+    km  = parseFloat(document.getElementById('input-km').value);
     spd = parseFloat(document.getElementById('input-spd').value);
 
-    if(isNaN(metersInc) || isNaN(spd)) return;
-
-    km = lastKm + (metersInc / 1000.0);
+    if(isNaN(km) || isNaN(spd) || spd <= 0) return;
 
     document.getElementById('input-km').value = "";
     document.getElementById('input-spd').value = "";
   }
 
   // =========================
-  // MODO TABLA (incremental)
+  // MODO TABLA (como tu JS original)
   // =========================
-  else {
+ else {
 
-      const metersInc = parseFloat(document.getElementById('input-km').value);
-      const minutes   = parseFloat(document.getElementById('table-m').value) || 0;
-      const seconds   = parseFloat(document.getElementById('table-s').value) || 0;
+  const kmInicio = parseFloat(document.getElementById('input-km').value);
+  const metros   = parseFloat(document.getElementById('table-m').value);
+  const segundos = parseFloat(document.getElementById('table-s').value);
 
-      const totalSec = (minutes * 60) + seconds;
+  if(isNaN(kmInicio) || isNaN(metros) || isNaN(segundos) || segundos <= 0) return;
 
-      if(isNaN(metersInc) || metersInc <= 0 || totalSec <= 0) return;
+  // Calcular media
+  spd = (metros / segundos) * 3.6;
 
-      // nueva distancia acumulada
-      km = lastKm + (metersInc / 1000.0);
+  km = kmInicio;
 
-      // calcular velocidad
-      spd = (metersInc / totalSec) * 3.6;
+  // Calcular siguiente KM automáticamente
+  let kmEnd = kmInicio + (metros / 1000.0);
 
-      document.getElementById('input-km').value = "";
-      document.getElementById('table-m').value = "0";
-      document.getElementById('table-s').value = "";
-  }
-
+  // Enviar al backend
   socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
+
+  // NUEVO COMPORTAMIENTO PROFESIONAL:
+
+  // Actualizar KM con siguiente punto automáticamente
+  document.getElementById('input-km').value = kmEnd.toFixed(3);
+
+  // NO borrar metros (se mantiene constante)
+  document.getElementById('table-s').value = "";
+
+  // Foco directo en segundos
+  document.getElementById('table-s').focus();
+
+  return;
 }
 
-
-function addSegmentFromCalib(){
-  if(!currentStageId) return;
-
-  const mode = document.querySelector('input[name="calibInputMode"]:checked').value;
-  const km = parseFloat(document.getElementById('calib-input-km').value);
-  if(isNaN(km)) return;
-
-  let spd = 0;
-  if(mode === "speed"){
-    spd = parseFloat(document.getElementById('calib-input-spd').value);
-    if(isNaN(spd)) return;
-  } else {
-    const mm = parseFloat(document.getElementById('calib-table-m').value);
-    const ss = parseFloat(document.getElementById('calib-table-s').value);
-    if(isNaN(mm) || isNaN(ss)) return;
-    const totalSec = (mm*60) + ss;
-    if(totalSec <= 0) return;
-    spd = (km * 3600) / totalSec;
-  }
-
   socket.send("SEG_ADD:" + currentStageId + ":" + km.toFixed(3) + ":" + spd.toFixed(1));
-
-  // limpiar
-  document.getElementById('calib-input-km').value = "";
-  document.getElementById('calib-input-spd').value = "";
-  document.getElementById('calib-table-m').value = "0";
-  document.getElementById('calib-table-s').value = "";
 }
 
 function renderCalibSegmentsTable(seg){
@@ -1041,13 +980,6 @@ static void handleCommand(String msg) {
     Stage* st = findStageById(currentStageId);
     if (!st) return;
     if (st->segCount >= MAX_SEGS) return;
-
-    // Si es el primer segmento y no empieza en 0 → crear hito 0 automático
-    if (st->segCount == 0 && km > 0.0001f) {
-      st->segs[0].km = 0.0f;
-      st->segs[0].speed = spd;
-      st->segCount++;
-    }
 
     st->segs[st->segCount].km = km;
     st->segs[st->segCount].speed = spd;
